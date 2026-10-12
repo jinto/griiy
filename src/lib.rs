@@ -1,5 +1,6 @@
 pub mod args;
 pub mod config;
+pub mod diff;
 pub mod events;
 pub mod git;
 pub mod protocol;

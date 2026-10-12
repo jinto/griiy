@@ -1,6 +1,6 @@
 //! git CLI wrapper and the errors shown on the in-window error screen (F-IN-5).
 
-use crate::args::Spec;
+use crate::{args::Spec, diff};
 use serde_json::{Value, json};
 use std::{
     io::{ErrorKind, Read},
@@ -84,6 +84,8 @@ pub fn run(program: &str, repo: &Path, args: &[&str], cancel: Option<&AtomicBool
         .env("GIT_TERMINAL_PROMPT", "0")
         // Paths come from git itself; never let them act as pathspec magic like `:(glob)`.
         .env("GIT_LITERAL_PATHSPECS", "1")
+        // Overrides -U on the command line; the diff parser needs git's own format.
+        .env_remove("GIT_DIFF_OPTS")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -185,8 +187,8 @@ pub struct Review {
     pub base: String,
     pub head: Head,
     pub text: String,
-    /// Changed paths; a path's index here is its file ID for `griiy://api/diff?id=`.
-    pub files: Vec<String>,
+    /// `text`, parsed. A file's index here is its ID for `griiy://api/diff?id=`.
+    pub files: Vec<diff::File>,
     pub tracked: String,
     pub git_ms: u64,
 }
@@ -223,18 +225,17 @@ impl Review {
                 (base, Head::Sha(b))
             }
         };
-        let text = diff(&repo, &base, &head, &[])?;
-        let names = diff(&repo, &base, &head, &["--name-only", "-z"])?;
-        let files = names.split('\0').filter(|s| !s.is_empty()).map(String::from).collect();
+        let text = diff(&repo, &base, &head)?;
+        let files = diff::parse(&text);
         let tracked = git(&repo, &["ls-files"])?;
         let git_ms = start.elapsed().as_millis() as u64;
         Ok(Review { repo, spec: spec.clone(), base, head, text, files, tracked, git_ms })
     }
 
-    /// Diff of one changed file, addressed only by its ID. `None` for an unknown ID.
-    pub fn file_diff(&self, id: usize) -> Option<Result<String, Error>> {
-        let path = self.files.get(id)?;
-        Some(diff(&self.repo, &self.base, &self.head, &["--", path.as_str()]))
+    /// One changed file, addressed only by its ID. `None` for an unknown ID. Served from the
+    /// diff taken at open, so it matches the list even if the working tree moved on since.
+    pub fn file_diff(&self, id: usize) -> Option<&diff::File> {
+        self.files.get(id)
     }
 
     pub fn to_json(&self) -> Value {
@@ -247,12 +248,19 @@ impl Review {
     }
 }
 
-/// `git diff <base> [<head>] <extra>`, from resolved shas only.
-fn diff(repo: &Path, base: &str, head: &Head, extra: &[&str]) -> Result<String, Error> {
-    let mut args = vec!["diff", "--no-color", "--no-ext-diff", base];
+/// `git diff <base> [<head>]`, from resolved shas only, in the one format `diff::parse` reads:
+/// every option that user config could change is pinned.
+fn diff(repo: &Path, base: &str, head: &Head) -> Result<String, Error> {
+    #[rustfmt::skip]
+    let mut args = vec![
+        "diff", "--no-color", "--no-ext-diff", "--no-textconv",
+        "--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--full-index", "-U3",
+        "--submodule=short", "--ignore-submodules=none",
+        // Renames, and copies from files changed in the same diff (--find-copies-harder scans the tree).
+        "-C", base,
+    ];
     if let Head::Sha(h) = head {
         args.push(h);
     }
-    args.extend(extra);
     git(repo, &args)
 }

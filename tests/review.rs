@@ -27,6 +27,10 @@ fn sha(r: &common::TempDir, rev: &str) -> String {
     git(&r.0, &["rev-parse", rev]).trim().to_string()
 }
 
+fn paths(r: &Review) -> Vec<&str> {
+    r.files.iter().map(|f| f.path.as_str()).collect()
+}
+
 fn range(base: &str, head: &str, merge_base: bool) -> Spec {
     Spec::Range { base: base.into(), head: head.into(), merge_base }
 }
@@ -37,7 +41,7 @@ fn two_dots_compares_endpoints() {
     let review = Review::open(&r.0, &range("main", "feature", false)).unwrap();
     assert_eq!(review.base, sha(&r, "main"));
     assert_eq!(review.head, Head::Sha(sha(&r, "feature")));
-    assert_eq!(review.files, ["feat.txt", "main.txt"]); // main.txt shows as deleted
+    assert_eq!(paths(&review), ["feat.txt", "main.txt"]); // main.txt shows as deleted
     assert!(review.text.contains("-main"), "{}", review.text);
 }
 
@@ -47,9 +51,9 @@ fn three_dots_compares_against_the_merge_base() {
     let review = Review::open(&r.0, &range("main", "feature", true)).unwrap();
     assert_eq!(review.base, git(&r.0, &["merge-base", "main", "feature"]).trim());
     assert_eq!(review.head, Head::Sha(sha(&r, "feature")));
-    assert_eq!(review.files, ["feat.txt"]);
-    let one = review.file_diff(0).unwrap().unwrap();
-    assert!(one.contains("+feat") && !one.contains("main.txt"), "{one}");
+    assert_eq!(paths(&review), ["feat.txt"]);
+    let one = review.file_diff(0).unwrap();
+    assert_eq!((one.path.as_str(), one.hunks[0].lines[0].text.as_str()), ("feat.txt", "feat"));
 }
 
 #[test]
@@ -71,7 +75,7 @@ fn worktree_includes_staged_and_unstaged_but_not_untracked() {
     let review = Review::open(&r.0, &Spec::default()).unwrap();
     assert_eq!(review.base, sha(&r, "HEAD"));
     assert_eq!(review.head, Head::WorkTree);
-    assert_eq!(review.files, ["staged.txt", "unstaged.txt"]);
+    assert_eq!(paths(&review), ["staged.txt", "unstaged.txt"]);
     assert!(review.text.contains("+staged") && review.text.contains("+unstaged"), "{}", review.text);
 }
 
@@ -81,7 +85,7 @@ fn single_rev_compares_it_with_the_worktree() {
     write(&r.0, "feat.txt", "feat\nedited\n");
     let review = Review::open(&r.0, &Spec::WorkTree { base: "main".into() }).unwrap();
     assert_eq!((review.base.as_str(), &review.head), (sha(&r, "main").as_str(), &Head::WorkTree));
-    assert_eq!(review.files, ["feat.txt", "main.txt"]);
+    assert_eq!(paths(&review), ["feat.txt", "main.txt"]);
     assert!(review.text.contains("+edited"), "{}", review.text);
 }
 
@@ -97,7 +101,7 @@ fn subdirectory_opens_the_whole_repo() {
     let r = repo("subdir", &[("d/a.txt", "a\n")]);
     write(&r.0, "d/a.txt", "b\n");
     let review = Review::open(&r.0.join("d"), &Spec::default()).unwrap();
-    assert_eq!((review.repo.as_path(), review.files.as_slice()), (r.0.as_path(), ["d/a.txt".to_string()].as_slice()));
+    assert_eq!((review.repo.as_path(), paths(&review)), (r.0.as_path(), vec!["d/a.txt"]));
 }
 
 #[test]
@@ -120,4 +124,14 @@ fn unknown_revisions_are_bad_ranges_even_on_an_unborn_branch() {
     git(&r.0, &["checkout", "-q", "--orphan", "fresh"]);
     let e = Review::open(&r.0, &range("main", "typo", false)).err().unwrap();
     assert!(matches!(&e, Error::BadRange { spec, .. } if spec == "typo"), "{e:?}");
+}
+
+#[test]
+fn renamed_file_diff_stays_a_rename() {
+    let r = repo("renamefd", &[("old.txt", "1\n2\n3\n4\n5\n")]);
+    git(&r.0, &["mv", "old.txt", "new.txt"]);
+    write(&r.0, "new.txt", "1\n2\n3\n4\nfive\n");
+    let review = Review::open(&r.0, &Spec::default()).unwrap();
+    let f = review.file_diff(0).unwrap();
+    assert_eq!((f.path.as_str(), f.old_path.as_deref(), f.stats()), ("new.txt", Some("old.txt"), (1, 1)));
 }

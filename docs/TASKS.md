@@ -38,7 +38,7 @@
   - ✓ 파서 단위 테스트 · 임시 저장소로 base/head sha가 PRD F-IN-2 표와 일치하는지 통합 테스트
 - [x] **M1-2 Review 정규화 (F-IN-3):** `head: Sha | WorkTree`
   - ✓ 작업 트리 모드에서 스테이징한 변경과 안 한 변경이 모두 보인다
-- [ ] **M1-3 diff 파서 (F-DV-10):** 파일/hunk/줄 구조와 메타데이터
+- [x] **M1-3 diff 파서 (F-DV-10):** 파일/hunk/줄 구조와 메타데이터
   - ✓ 실제 git 출력 fixture: rename, copy, binary, 모드 변경, 삭제, 새 파일, 개행 없음, CRLF, 공백·비ASCII·따옴표 파일명(`core.quotePath`)
 - [ ] **M1-4 줄 매핑 (F-AI-1 기반):** `Selection { path, side, start, end }` ↔ base/head 파일 줄 범위
   - ✓ hunk 경계, 추가만, 삭제만, 섞인 선택 fixture에서 기대한 base·head 범위가 나온다

@@ -57,16 +57,20 @@ fn files_are_reachable_only_by_id() {
     }
     let review = Review::open(&r.0, &Spec::default()).unwrap();
     assert_eq!(review.files.len(), 3);
-    for (id, path) in review.files.iter().enumerate() {
+    for (id, path) in review.files.iter().map(|f| &f.path).enumerate() {
         let res = handle(&format!("griiy://api/diff?id={id}").parse::<Uri>().unwrap(), Some(&review));
         assert_eq!(res.status(), 200, "{path}");
         assert_eq!(res.headers()["Content-Type"], "application/json");
         assert_eq!(res.headers()["Access-Control-Allow-Origin"], "griiy://app");
         let v: Value = serde_json::from_slice(res.body()).unwrap();
         assert_eq!(v["path"], path.as_str());
-        let text = v["text"].as_str().unwrap();
-        assert!(text.contains("+changed"), "{path}: {text}");
-        assert!(!text.contains("diff --git a/plain.txt") || path == "plain.txt", "one file only: {text}");
+        assert_eq!(v["status"], "modified", "{v}");
+        let line = &v["hunks"][0]["lines"][1];
+        assert_eq!(
+            (line["kind"].as_str(), line["text"].as_str(), line["new"].as_u64()),
+            (Some("add"), Some("changed"), Some(2)),
+            "{v}"
+        );
     }
     let n = review.files.len();
     for url in [

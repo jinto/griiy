@@ -20,8 +20,6 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("/app.css", CSS, include_bytes!("app/app.css")),
 ];
 
-// ponytail: synchronous; runs git on the main thread. M1-5 moves `api/` to
-// with_asynchronous_custom_protocol plus a worker thread once the page calls it.
 pub fn handle(uri: &Uri, review: Option<&Review>) -> Response<Body> {
     if uri.scheme_str() != Some("griiy") {
         return not_found();
@@ -44,8 +42,7 @@ fn api(path: &str, query: Option<&str>, review: Option<&Review>) -> Response<Bod
                 return api_json(StatusCode::NOT_FOUND, json!({ "error": "not found" }));
             };
             match r.file_diff(id) {
-                Some(Ok(text)) => api_json(StatusCode::OK, json!({ "id": id, "path": r.files[id], "text": text })),
-                Some(Err(e)) => api_json(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": e.to_json() })),
+                Some(f) => api_json(StatusCode::OK, f.to_json()),
                 None => api_json(StatusCode::NOT_FOUND, json!({ "error": "not found" })),
             }
         }
