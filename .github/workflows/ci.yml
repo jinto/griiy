@@ -1,0 +1,23 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo build --release
+      - name: No unwrap/expect in app code
+        run: "! grep -rnE '\\.(unwrap|expect)\\(' src/"
+      - name: Binary size
+        run: ls -l target/release/griiy | awk '{ printf "binary: %.2f MB\n", $5 / 1048576 }' | tee -a "$GITHUB_STEP_SUMMARY"

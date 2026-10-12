@@ -1,0 +1,33 @@
+:root { --bg:#fff; --fg:#1f2328; --mut:#656d76; --line:#d0d7de; --side:#f6f8fa;
+        --add:#dafbe1; --del:#ffebe9; --hunk:#ddf4ff; --sel:#0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --fg:#e6edf3; --mut:#8d96a0; --line:#30363d; --side:#161b22;
+          --add:#12261e; --del:#25171c; --hunk:#121d2f; --sel:#4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin:0; height:100vh; display:grid; grid-template:auto 1fr / 260px 1fr;
+       background:var(--bg); color:var(--fg); font:13px -apple-system, system-ui, sans-serif; }
+header { grid-column:1/3; padding:8px 12px; border-bottom:1px solid var(--line); display:flex; gap:12px; }
+header b { font-weight:600; } header span { color:var(--mut); }
+nav { overflow:auto; background:var(--side); border-right:1px solid var(--line); }
+nav { padding:4px 0; }
+nav a, nav summary { display:flex; justify-content:space-between; padding:3px 12px; color:inherit;
+                     text-decoration:none; white-space:nowrap; }
+nav summary { display:list-item; color:var(--mut); cursor:default; }
+nav details > :not(summary) { margin-left:12px; }
+nav a > span { overflow:hidden; text-overflow:ellipsis; }
+nav a > small { flex-shrink:0; margin-left:8px; }
+nav a.un { color:var(--mut); opacity:.6; }
+nav a[href]:hover, nav summary:hover { background:var(--line); }
+nav a.on { box-shadow: inset 3px 0 var(--sel); }
+nav small { font-variant-numeric:tabular-nums; } .a { color:#1a7f37; } .d { color:#cf222e; }
+main { overflow:auto; }
+section h2 { position:sticky; top:0; margin:0; padding:6px 12px; font:600 12px ui-monospace, monospace;
+             background:var(--side); border-bottom:1px solid var(--line); }
+pre { margin:0; font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre div { padding:0 12px; white-space:pre; min-height:1.5em; }
+.ad { background:var(--add); } .de { background:var(--del); } .hu { background:var(--hunk); color:var(--mut); }
+.empty { padding:24px; color:var(--mut); }
+.error { padding:32px; max-width:640px; }
+.error h1 { font-size:18px; margin:0 0 12px; }
+.error pre { white-space:pre-wrap; color:var(--mut); margin:0 0 12px; }
