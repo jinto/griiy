@@ -21,12 +21,27 @@ nav a.un { color:var(--mut); opacity:.6; }
 nav a[href]:hover, nav summary:hover { background:var(--line); }
 nav a.on { box-shadow: inset 3px 0 var(--sel); }
 nav small { font-variant-numeric:tabular-nums; } .a { color:#1a7f37; } .d { color:#cf222e; }
-main { overflow:auto; }
-section h2 { position:sticky; top:0; margin:0; padding:6px 12px; font:600 12px ui-monospace, monospace;
-             background:var(--side); border-bottom:1px solid var(--line); }
-pre { margin:0; font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-pre div { padding:0 12px; white-space:pre; min-height:1.5em; }
-.ad { background:var(--add); } .de { background:var(--del); } .hu { background:var(--hunk); color:var(--mut); }
+main { overflow:auto; outline:none; }
+/* Diff rows: one fixed height for every kind, which the virtual list depends on. */
+.r { height:18px; line-height:18px; overflow:hidden; white-space:pre; padding:0 12px 0 0;
+     font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+#space { position:relative; }
+#rows { position:absolute; top:0; left:0; min-width:100%; }
+#sticky { position:sticky; top:0; left:0; height:0; z-index:1; }
+.fh { padding-left:12px; font-weight:600; background:var(--side); border-bottom:1px solid var(--line);
+      display:flex; gap:6px; }
+.fh small { margin-left:auto; padding-left:12px; font-weight:400; }
+.fh .from { color:var(--mut); font-weight:400; }
+.st { color:var(--mut); width:1ch; }
+.st.added { color:#1a7f37; } .st.deleted { color:#cf222e; }
+/* Line numbers come from data attributes, so they never end up in a copy. */
+.r i { display:inline-flex; vertical-align:top; user-select:none; color:var(--mut); font-style:normal; margin-right:8px; }
+.r i::before, .r i::after { width:6ch; text-align:right; }
+.r i::before { content:attr(data-o); } .r i::after { content:attr(data-n); }
+.nn::after { content:"  \\ no newline at end of file"; color:var(--mut); user-select:none; }
+.ad { background:var(--add); } .de { background:var(--del); }
+.hu { background:var(--hunk); color:var(--mut); padding-left:12px; }
+.note { color:var(--mut); padding-left:12px; font-style:italic; }
 .empty { padding:24px; color:var(--mut); }
 .error { padding:32px; max-width:640px; }
 .error h1 { font-size:18px; margin:0 0 12px; }

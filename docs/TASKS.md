@@ -42,12 +42,14 @@
   - ✓ 실제 git 출력 fixture: rename, copy, binary, 모드 변경, 삭제, 새 파일, 개행 없음, CRLF, 공백·비ASCII·따옴표 파일명(`core.quotePath`)
 - [ ] **M1-4 줄 매핑 (F-AI-1 기반):** `Selection { path, side, start, end }` ↔ base/head 파일 줄 범위
   - ✓ hunk 경계, 추가만, 삭제만, 섞인 선택 fixture에서 기대한 base·head 범위가 나온다
-- [ ] **M1-5 지연 로딩 (§7.3):** 시작 시 목록과 통계만, 파일 diff는 `api/diff?id=`
+- [x] **M1-5 지연 로딩 (§7.3):** 시작 시 목록과 통계만, 파일 diff는 `api/diff?id=`
   - ✓ 12만 줄 저장소에서 초기 주입 데이터 < 100KB
 - [ ] **M1-6 가상 스크롤 (F-DV-4)**
   - ✓ bench.sh 12만 줄: 첫 화면 < 1s, RSS < 250MB, diff 패널 DOM < 5,000, 자동 스크롤 중 50ms 넘는 프레임 ≤ 1%
+  - 진행 (2026-10-13): 첫 화면 0.52~0.60s, DOM 최대 244, 50ms 초과 프레임 0/590 달성. **RSS는 194~268MB로 경계**다(작은 diff도 약 200MB, 대부분 WebKit 프로세스). 기준을 physical footprint로 바꿀지, Rust 쪽 메모리를 줄일지 결정이 필요하다 (docs/PLAN-M1-5-6.md 측정 표)
 - [ ] **M1-7 bench.sh 확장:** DOM 수, 자동 스크롤 long-frame 집계, JSON 출력
   - ✓ CI 아티팩트로 저장 (참고용, 실패 기준 아님)
+  - 진행: DOM 수, 자동 스크롤 long-frame·blank 집계, JSONL 출력은 M1-6과 함께 완료 (2026-10-13). 남은 일: CI 아티팩트 저장
 - [ ] **M1-8 파일 트리 개선 (F-DV-1):** 접힌 폴더는 펼칠 때 렌더
   - ✓ 1만 파일 저장소에서 트리 DOM < 2,000
 - [ ] **M1-9 구문 강조 (F-DV-3):** vendored, 첫 페인트 후 로드, 보이는 줄만

@@ -186,12 +186,15 @@ pub struct Review {
     pub spec: Spec,
     pub base: String,
     pub head: Head,
-    pub text: String,
-    /// `text`, parsed. A file's index here is its ID for `griiy://api/diff?id=`.
+    /// The parsed diff. A file's index here is its ID for `griiy://api/diff?id=`.
     pub files: Vec<diff::File>,
     pub tracked: String,
     pub git_ms: u64,
 }
+
+/// Rows sent with the first paint (`Review::to_json`): more than a 4K screen holds at 18px.
+const FIRST_ROWS: usize = 300;
+const FIRST_BYTES: usize = 32 << 10;
 
 impl Review {
     pub fn open(dir: &Path, spec: &Spec) -> Result<Review, Error> {
@@ -225,11 +228,16 @@ impl Review {
                 (base, Head::Sha(b))
             }
         };
-        let text = diff(&repo, &base, &head)?;
-        let files = diff::parse(&text);
-        let tracked = git(&repo, &["ls-files"])?;
+        // ls-files (for the tree) runs alongside the diff instead of after it.
+        let (files, tracked) = std::thread::scope(|s| {
+            let tracked = s.spawn(|| git(&repo, &["ls-files"]));
+            let files = diff(&repo, &base, &head).map(|t| diff::parse(&t));
+            let tracked = tracked.join().unwrap_or_else(|_| Err(Error::Git { detail: "ls-files panicked".into() }));
+            (files, tracked)
+        });
+        let (files, tracked) = (files?, tracked?);
         let git_ms = start.elapsed().as_millis() as u64;
-        Ok(Review { repo, spec: spec.clone(), base, head, text, files, tracked, git_ms })
+        Ok(Review { repo, spec: spec.clone(), base, head, files, tracked, git_ms })
     }
 
     /// One changed file, addressed only by its ID. `None` for an unknown ID. Served from the
@@ -238,13 +246,33 @@ impl Review {
         self.files.get(id)
     }
 
+    /// The first-paint summary. It carries the first rows of the leading files, about a tall
+    /// screen's worth and at most `FIRST_BYTES` (one minified line can be megabytes), so the first
+    /// paint needs no `api/diff` round trip. A file cut short here still loads from `api/diff`.
     pub fn to_json(&self) -> Value {
+        let (mut rows_left, mut bytes_left) = (FIRST_ROWS, FIRST_BYTES);
+        let mut first = Vec::new();
+        for f in &self.files {
+            let rows: Vec<Value> = (f.rows(0, rows_left).into_iter())
+                .take_while(|r| {
+                    let n = r.to_string().len();
+                    bytes_left = bytes_left.saturating_sub(n);
+                    bytes_left > 0
+                })
+                .collect();
+            rows_left -= rows.len();
+            first.push(rows);
+            if rows_left == 0 || bytes_left == 0 {
+                break;
+            }
+        }
         let head = match &self.head {
             Head::Sha(h) => h.as_str(),
             Head::WorkTree => "worktree",
         };
         json!({ "repo": self.repo, "label": self.spec.label(), "base": self.base, "head": head,
-                "text": self.text, "tracked": self.tracked, "gitMs": self.git_ms })
+                "gitMs": self.git_ms, "files": self.files.iter().map(diff::File::summary).collect::<Vec<_>>(),
+                "first": first })
     }
 }
 

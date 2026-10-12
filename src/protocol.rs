@@ -20,6 +20,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("/app.css", CSS, include_bytes!("app/app.css")),
 ];
 
+/// `review` is `None` until the review is open, and when it failed (the page shows the error).
 pub fn handle(uri: &Uri, review: Option<&Review>) -> Response<Body> {
     if uri.scheme_str() != Some("griiy") {
         return not_found();
@@ -38,14 +39,23 @@ pub fn handle(uri: &Uri, review: Option<&Review>) -> Response<Body> {
 fn api(path: &str, query: Option<&str>, review: Option<&Review>) -> Response<Body> {
     match (path, review) {
         ("/diff", Some(r)) => {
-            let Some(id) = query.and_then(|q| q.strip_prefix("id=")).and_then(parse_id) else {
-                return api_json(StatusCode::NOT_FOUND, json!({ "error": "not found" }));
-            };
-            match r.file_diff(id) {
-                Some(f) => api_json(StatusCode::OK, f.to_json()),
+            // `id=N`, optionally `&from=M&n=K`: a window of the file's rows (all of them by default).
+            let window = query.and_then(|q| {
+                let mut p = q.split('&');
+                let id = parse_id(p.next()?.strip_prefix("id=")?)?;
+                let (from, n) = match (p.next(), p.next(), p.next()) {
+                    (None, ..) => (0, usize::MAX),
+                    (Some(f), Some(n), None) => (parse_id(f.strip_prefix("from=")?)?, parse_id(n.strip_prefix("n=")?)?),
+                    _ => return None,
+                };
+                Some((id, from, n))
+            });
+            match window.and_then(|(id, from, n)| Some((r.file_diff(id)?, from, n))) {
+                Some((f, from, n)) => api_json(StatusCode::OK, json!({ "rows": f.rows(from, n) })),
                 None => api_json(StatusCode::NOT_FOUND, json!({ "error": "not found" })),
             }
         }
+        ("/tracked", Some(r)) if query.is_none() => api_json(StatusCode::OK, json!({ "tracked": r.tracked })),
         _ => api_json(StatusCode::NOT_FOUND, json!({ "error": "not found" })),
     }
 }

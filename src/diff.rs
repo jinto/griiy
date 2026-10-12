@@ -73,31 +73,80 @@ impl File {
         })
     }
 
-    /// JSON names are the variant names in lowercase: `added`, `renamed`, `add`, `context`...
-    pub fn to_json(&self) -> Value {
-        json!({ "path": self.path, "oldPath": self.old_path, "status": lower(self.status), "oldMode": self.old_mode,
-                "newMode": self.new_mode, "oldBlob": self.old_blob, "newBlob": self.new_blob,
-                "binary": self.binary, "hunks": self.hunks.iter().map(Hunk::to_json).collect::<Vec<_>>() })
+    /// Rows on screen: the file header, then each hunk's header and lines, or one note row when
+    /// there are no hunks. The frontend sizes the whole scroll area from this before any rows load.
+    pub fn row_count(&self) -> usize {
+        1 + match self.hunks.len() {
+            0 => 1,
+            n => n + self.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
+        }
     }
-}
 
-impl Hunk {
-    fn to_json(&self) -> Value {
-        json!({ "oldStart": self.old_start, "oldLen": self.old_len, "newStart": self.new_start,
-                "newLen": self.new_len, "section": self.section,
-                "lines": self.lines.iter().map(Line::to_json).collect::<Vec<_>>() })
+    /// The rows themselves, compact for `api/diff`: `["f"]` file header (drawn from the summary),
+    /// `["h", "@@ … @@ section"]`, `[" "|"+"|"-", old, new, text]` plus a trailing `1` when
+    /// `\ No newline at end of file` follows, `["n", note]`. Of the `row_count()` rows, the
+    /// window `from..from + n`.
+    pub fn rows(&self, from: usize, n: usize) -> Vec<Value> {
+        let end = from.saturating_add(n);
+        let want = |i: usize| (from..end).contains(&i);
+        let mut rows = Vec::new();
+        if want(0) {
+            rows.push(json!(["f"]));
+        }
+        if self.hunks.is_empty() {
+            if want(1) {
+                rows.push(json!(["n", self.note()]));
+            }
+            return rows;
+        }
+        // Whole hunks before the window are skipped by their size, so a window deep in a huge
+        // file costs its own rows, not everything above it.
+        let mut at = 1;
+        for h in &self.hunks {
+            if at >= end {
+                break;
+            }
+            if at + 1 + h.lines.len() > from {
+                if want(at) {
+                    let head =
+                        format!("@@ -{},{} +{},{} @@ {}", h.old_start, h.old_len, h.new_start, h.new_len, h.section);
+                    rows.push(json!(["h", head.trim_end()]));
+                }
+                let last = (end - (at + 1)).min(h.lines.len());
+                let first = from.saturating_sub(at + 1).min(last);
+                rows.extend(h.lines[first..last].iter().map(|l| {
+                    let kind = match l.kind {
+                        Kind::Context => " ",
+                        Kind::Add => "+",
+                        Kind::Del => "-",
+                    };
+                    match l.no_newline {
+                        true => json!([kind, l.old_no, l.new_no, l.text, 1]),
+                        false => json!([kind, l.old_no, l.new_no, l.text]),
+                    }
+                }));
+            }
+            at += 1 + h.lines.len();
+        }
+        rows
     }
-}
 
-impl Line {
-    fn to_json(&self) -> Value {
-        json!({ "kind": lower(self.kind), "old": self.old_no, "new": self.new_no, "text": self.text,
-                "noNewline": self.no_newline })
+    /// Why a file with no hunks is in the diff.
+    fn note(&self) -> String {
+        match (&self.old_mode, &self.new_mode) {
+            _ if self.binary => "Binary file".into(),
+            (Some(a), Some(b)) if a != b => format!("Mode {a} → {b}"),
+            _ => "No content changes".into(),
+        }
     }
-}
 
-fn lower(v: impl std::fmt::Debug) -> String {
-    format!("{v:?}").to_lowercase()
+    /// First-paint summary: `[path, status, added, deleted, rows, oldPath]`. A tuple, not
+    /// an object, so a 120k-line review fits in well under 100KB (M1-5).
+    pub fn summary(&self) -> Value {
+        let (add, del) = self.stats();
+        let status = format!("{:?}", self.status).to_lowercase();
+        json!([self.path, status, add, del, self.row_count(), self.old_path])
+    }
 }
 
 /// A file while its header is read: names from each source, kept apart until the end.

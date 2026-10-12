@@ -63,14 +63,11 @@ fn files_are_reachable_only_by_id() {
         assert_eq!(res.headers()["Content-Type"], "application/json");
         assert_eq!(res.headers()["Access-Control-Allow-Origin"], "griiy://app");
         let v: Value = serde_json::from_slice(res.body()).unwrap();
-        assert_eq!(v["path"], path.as_str());
-        assert_eq!(v["status"], "modified", "{v}");
-        let line = &v["hunks"][0]["lines"][1];
-        assert_eq!(
-            (line["kind"].as_str(), line["text"].as_str(), line["new"].as_u64()),
-            (Some("add"), Some("changed"), Some(2)),
-            "{v}"
-        );
+        // File header, hunk header, then the lines: [kind, old, new, text].
+        let rows = v["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), review.files[id].row_count(), "{path}: {v}");
+        assert_eq!((rows[0][0].as_str(), rows[1][0].as_str()), (Some("f"), Some("h")), "{path}: {v}");
+        assert_eq!(rows[3], serde_json::json!(["+", null, 2, "changed"]), "{path}: {v}");
     }
     let n = review.files.len();
     for url in [
@@ -94,4 +91,34 @@ fn files_are_reachable_only_by_id() {
     }
     // No review (error screen): the API has nothing to serve.
     assert_eq!(get("griiy://api/diff?id=0", None).0, 404);
+}
+
+#[test]
+fn tracked_files_come_after_first_paint() {
+    let r = repo("tracked", &[("a.txt", "a\n"), ("d/b.txt", "b\n")]);
+    let review = Review::open(&r.0, &Spec::default()).unwrap();
+    let (status, _, body) = get("griiy://api/tracked", Some(&review));
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((status, v["tracked"].as_str()), (200, Some("a.txt\nd/b.txt\n")));
+    assert_eq!(get("griiy://api/tracked", None).0, 404);
+    assert_eq!(get("griiy://api/tracked?x=1", Some(&review)).0, 404);
+}
+
+#[test]
+fn diff_rows_come_in_windows() {
+    let r = repo("window", &[("a.txt", &(0..50).map(|i| format!("{i}\n")).collect::<String>())]);
+    write(&r.0, "a.txt", &(0..50).map(|i| format!("{}\n", i * 3)).collect::<String>());
+    let review = Review::open(&r.0, &Spec::default()).unwrap();
+    let rows = |url: &str| {
+        let (status, _, body) = get(url, Some(&review));
+        assert_eq!(status, 200, "{url}");
+        serde_json::from_slice::<Value>(&body).unwrap()["rows"].clone()
+    };
+    let all = review.files[0].rows(0, usize::MAX);
+    assert_eq!(rows("griiy://api/diff?id=0"), serde_json::json!(all));
+    assert_eq!(rows("griiy://api/diff?id=0&from=10&n=5"), serde_json::json!(all[10..15]));
+    assert_eq!(rows("griiy://api/diff?id=0&from=9999&n=5"), serde_json::json!([]));
+    for url in ["griiy://api/diff?id=0&n=5", "griiy://api/diff?id=0&from=1&n=2&x=3", "griiy://api/diff?id=0&from=-1"] {
+        assert_eq!(get(url, Some(&review)).0, 404, "{url}");
+    }
 }

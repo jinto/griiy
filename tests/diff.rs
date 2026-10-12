@@ -277,3 +277,33 @@ fn names_that_are_not_utf8_decode_lossily() {
     let f = &parse("diff --git \"a/\\377x\" \"b/\\377x\"\nindex 1111111..2222222 100644\n")[0];
     assert_eq!(f.path, "\u{FFFD}x");
 }
+
+#[test]
+fn row_count_matches_rows() {
+    let files = changed("rows", &[("a.txt", TEN), ("b.dat", "\0"), ("run.sh", "x\n"), ("gone.txt", "g\n")], |d| {
+        write(d, "a.txt", &TEN.replace('2', "two").replace("9", "nine"));
+        write(d, "b.dat", "\0\x01");
+        std::fs::set_permissions(d.join("run.sh"), PermissionsExt::from_mode(0o755)).unwrap();
+        std::fs::remove_file(d.join("gone.txt")).unwrap();
+        write(d, "empty.txt", "");
+        write(d, "eof.txt", "no newline");
+    });
+    for f in &files {
+        // Any window of rows is the same slice of the whole.
+        let all = f.rows(0, usize::MAX);
+        for (from, n) in [(0, 1), (1, 2), (2, 3), (3, 100), (all.len() - 1, 5), (all.len(), 5)] {
+            let want = &all[from.min(all.len())..(from + n).min(all.len())];
+            assert_eq!(f.rows(from, n), want, "{} {from}+{n}", f.path);
+        }
+        let rows = f.rows(0, usize::MAX);
+        assert_eq!(rows.len(), f.row_count(), "{}: {rows:?}", f.path);
+        assert_eq!(rows[0], serde_json::json!(["f"]), "{}", f.path);
+    }
+    // Files without hunks say why in one note row.
+    let note = |p: &str| one(&files, p).rows(0, usize::MAX)[1].clone();
+    assert_eq!(note("b.dat"), serde_json::json!(["n", "Binary file"]));
+    assert_eq!(note("run.sh"), serde_json::json!(["n", "Mode 100644 → 100755"]));
+    assert_eq!(note("empty.txt"), serde_json::json!(["n", "No content changes"]));
+    // The no-newline marker is a flag on its line, not a row.
+    assert_eq!(one(&files, "eof.txt").rows(0, usize::MAX)[2], serde_json::json!(["+", null, 1, "no newline", 1]));
+}
