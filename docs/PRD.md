@@ -43,7 +43,7 @@
 | F-IN-1 | `griiy [<range> \| <PR URL> \| #<n>] [-C <repo>]` |
 | F-IN-2 | 범위 의미 (git과 같음): `a..b` → base=`a`, head=`b` (끝점 비교) · `a...b` → base=`merge-base(a,b)`, head=`b` · 인자 없음 → base=`HEAD`, head=작업 트리(인덱스 포함, `git diff HEAD`) · PR → base=`merge-base(base 브랜치 tip, head)` |
 | F-IN-3 | 모든 입력은 `Review { repo, base: Sha, head: Sha \| WorkTree, pr: Option<PrMeta> }`로 정규화한다. diff는 항상 로컬 git으로 계산한다 |
-| F-IN-4 | 실행하면 창이 앞으로 나오고 키 입력을 받는다. 서명된 `.app` 배포와 bare binary 둘 다에서 M0 POC로 확인하고, bare binary에서 보장되지 않으면 `.app` + CLI 심링크 배포로 정한다 |
+| F-IN-4 | 실행하면 창이 앞으로 나오고 키 입력을 받는다. 배포는 `.app` + CLI 심링크(`/usr/local/bin/griiy` → `griiy.app/Contents/MacOS/griiy`)다 (2026-10-13 Swift 전환으로 확정) |
 | F-IN-5 | git 없음, 저장소 아님, 잘못된 범위, fetch 실패, 권한 없음 → 창 안에 원인과 해결 방법을 보여준다. 패닉 금지 |
 
 ### 6.2 PR 소스
@@ -65,7 +65,7 @@
 | F-DV-4 | 가상 스크롤: diff 패널의 DOM은 보이는 줄 수에 비례한다 |
 | F-DV-5 | 파일 전체 보기: 트리에서 아무 파일이나 열면 head 버전 전체(작업 트리면 디스크 파일)를 보여주고 변경 줄을 표시한다 |
 | F-DV-6 | (v0.2) 줄 안 단어 단위 강조 |
-| F-DV-7 | 검색: `⌘P` 파일 이름 퍼지 검색은 프론트에서, `/` diff 텍스트 검색은 백엔드(`griiy://api/search`)에서 하고 결과 위치로 이동한다 |
+| F-DV-7 | 검색: `⌘P` 파일 이름 퍼지 검색은 프론트에서, `/` diff 텍스트 검색은 코어(`GriiyCore`)에서 하고 결과 위치로 이동한다 |
 | F-DV-8 | 단축키: `]` `[` 파일, `n` `p` hunk, `/` `⌘P` 검색, `?` 질문, `v` 봤음, `⌘/` 도움말. (v0.2) `s` 보기 전환 |
 | F-DV-9 | 파일별 봤음 체크. head가 바뀌면 blob이 같은 파일만 체크를 이월한다 |
 | F-DV-10 | 바이너리, 이름 변경, 모드 변경, 삭제, 대용량 파일(기본 1MB 초과는 접힘) 표시 |
@@ -92,7 +92,7 @@
 |---|---|
 | F-EX-1 | 모델은 **Markdown과 ```mermaid 블록만** 출력한다: 요약, 변경 구조 다이어그램, 파일별 요점, 위험 지점 |
 | F-EX-2 | **신뢰 영역**(앱)이 Markdown을 F-PR-5 규칙으로 렌더하고, Mermaid를 내장 라이브러리로 SVG로 바꾼다. 결과는 `script-src 'none'`, 네트워크 금지 CSP를 건 정적 문서로 별도 탭에 띄운다. 모델 출력의 스크립트는 어떤 경우에도 실행되지 않는다 |
-| F-EX-3 | 파일과 줄 참조는 `griiy://goto?...` 링크로 만들고, wry navigation handler가 가로채 diff 탭으로 이동한다. 그 밖의 navigation, 팝업, 다운로드는 차단한다 |
+| F-EX-3 | Explain 탭만 WKWebView를 쓴다(탭을 열 때 만든다). 파일과 줄 참조는 `griiy://goto?...` 링크로 만들고, navigation delegate가 가로채 diff 탭으로 이동한다. 그 밖의 navigation, 팝업, 다운로드는 차단한다 |
 | F-EX-4 | 실행 전에 F-AI-6과 같은 근거·토큰 미리보기를 보여준다. 상한의 70%를 넘는 "큰 PR"이면 파일별 요약을 먼저 만들어 합친다 |
 | F-EX-5 | 캐시 키는 (리뷰 키, base sha, head sha, `prompt_version`)이다. 재생성 버튼을 둔다 |
 
@@ -104,31 +104,31 @@
 ## 7. 설계
 
 ### 7.1 원칙
-- **실행 파일 하나.** HTML, JS, CSS, highlight, Mermaid를 모두 바이너리에 내장한다. CDN은 쓰지 않는다
-- **프론트엔드 빌드 단계 없음:** vendored 라이브러리와 순수 ES 모듈
+- **앱 하나.** `griiy.app` 하나에 모든 것을 담는다(Explain의 Mermaid도 내장). CDN은 쓰지 않는다
+- **네이티브 UI:** Swift + AppKit. 의존성 없이 Foundation과 AppKit만 쓴다
 - **외부 도구는 이미 설치된 것을 호출한다:** git(필수), gh, claude(선택)
 - **읽기 전용:** 저장소에는 `refs/griiy/*`만 쓴다
 
 ### 7.2 구조
 ```
-griiy (Rust)
- ├─ cli      인자 → Input
- ├─ source   Input → Review (Local | GitHub | Bitbucket)
- ├─ git      git CLI 래퍼 (timeout, 출력 상한, 취소)
- ├─ diff     unified diff → 파일/hunk/줄 구조, Selection ↔ base/head 줄 매핑
- ├─ ai       Backend(ClaudeCli | AnthropicApi), 근거 수집기, 프롬프트(prompt_version), 인용 검증
- ├─ ticket   (v0.2) Jira
- ├─ store    리뷰별 JSON, 스키마 버전
- ├─ secret   환경변수 → 키체인
- └─ ui       tao 창, wry WebView, griiy:// 프로토콜, 이벤트 채널
-frontend (내장)  index.html · app.js · diff-view.js · tree.js · ask.js · md.js · vendor/{highlight, mermaid}
+GriiyCore (Swift 라이브러리, Foundation만)
+ ├─ Args     인자 → Spec
+ ├─ Source   Spec/PR → Review (Local | GitHub | Bitbucket)
+ ├─ Git      git CLI 래퍼 (자기 프로세스 그룹, 취소, 고정 환경)
+ ├─ Diff     unified diff → 파일/hunk/줄 구조, Selection ↔ base/head 줄 매핑
+ ├─ AI       Backend(ClaudeCli | AnthropicApi), 근거 수집기, 프롬프트(prompt_version), 인용 검증
+ ├─ Ticket   (v0.2) Jira
+ ├─ Store    리뷰별 JSON, 스키마 버전
+ └─ Secret   환경변수 → 키체인
+griiy (AppKit 앱)  창, NSTableView diff, NSOutlineView 트리, Ask 패널, (v0.2) Explain 탭(WKWebView)
 ```
 
-### 7.3 백엔드와 화면 사이 통신
-- **시작:** 파일 목록, 통계, PR 메타데이터만 보낸다. 파일별 diff, 파일 내용, 검색, 근거 미리보기는 필요할 때 요청한다.
-- **`griiy://` 라우트는 허용 목록만:** `griiy://app/<asset>`(내장 자산), `griiy://api/<route>`(JSON). 파일은 경로 문자열이 아니라 현재 `Review`의 **파일 ID**(목록 인덱스)로만 요청한다. 임의 경로, `..`, 다른 ref 요청은 404다. 응답에 정확한 MIME 타입을 붙인다.
-- **이벤트 채널 (스트리밍):** 백엔드에서 화면으로 가는 모든 메시지는 `{v:1, req:<id>, type, data}` JSON 하나로 `evaluate_script`를 통해 보낸다. 화면이 `ready`를 보내기 전에는 큐에 쌓고, 큐 상한을 넘으면 청크를 합친다. 취소하거나 창을 닫으면 요청 ID에 연결된 백엔드 작업(AI 프로세스, git)을 중단한다.
-- **첫 페인트를 늦추지 않는다:** highlight와 Mermaid는 첫 페인트 후 지연 로드한다.
+### 7.3 코어와 화면
+- **시작:** 리뷰는 창 생성과 병렬로 별도 스레드에서 연다. git은 blocking이므로 `Thread`에서 돌리고 결과를 `MainActor`로 넘긴다.
+- **가상 목록:** diff는 고정 높이 행의 `NSTableView` 하나다. 화면에 보이는 행만 뷰가 있고, 행은 파싱한 구조체에서 바로 만든다.
+- **파일은 ID로:** 화면은 파일을 리뷰 안의 인덱스로만 다룬다. 경로를 다시 git에 넘기지 않는다.
+- **취소:** 요청마다 취소 토큰을 둔다. 창을 닫거나 앱을 끝내면 실행 중인 git(과 그 자식)의 프로세스 그룹을 죽인다.
+- **첫 페인트를 늦추지 않는다:** 트리, 구문 강조, Mermaid는 첫 페인트 뒤에 만든다.
 
 ### 7.4 저장
 - 경로: `~/Library/Application Support/griiy/reviews/<key>.json`, 스키마 `version` 필드.
@@ -139,13 +139,13 @@ frontend (내장)  index.html · app.js · diff-view.js · tree.js · ask.js · 
 ## 8. 비기능 요구사항
 | 항목 | 목표 | 측정 방법 | 스파이크 참고치 |
 |---|---|---|---|
-| 첫 화면, ≤2,000줄, 웜 스타트 | < 1s | bench.sh 실행→첫 페인트 | 670–810ms |
-| 첫 화면, 12만 줄 | < 1s | bench.sh | 1.5s (가상 스크롤 전) |
-| 스크롤 | 12만 줄에서 끝까지 스크롤할 때 50ms 넘는 프레임 ≤ 1% | bench.sh 자동 스크롤 + long-frame 집계 | 미측정 |
-| diff 패널 DOM | < 5,000 노드 (트리 제외) | bench.sh가 보고 | 12만+ |
-| 메모리, ≤2,000줄 | < 200MB (WebKit 포함) | bench.sh RSS | 148–158MB |
-| 메모리, 12만 줄 | < 250MB | bench.sh RSS | 531MB |
-| 바이너리 | < 15MB | CI | 1.5MB |
+| 첫 화면, ≤2,000줄, 웜 스타트 | < 1s | scripts/bench.sh 실행→첫 페인트 | 182ms (Swift, 2026-10-13) |
+| 첫 화면, 12만 줄 | < 1s | scripts/bench.sh | 299ms (15만 행) |
+| 스크롤 | 12만 줄에서 50ms 넘는 프레임 ≤ 1% | scripts/bench.sh 자동 스크롤(10곳 점프 × 60프레임) | 0/590 |
+| diff 행 뷰 | 화면에 보이는 수에 비례 (< 5,000) | scripts/bench.sh가 보고 | 39 |
+| 메모리, ≤2,000줄 | < 200MB | scripts/bench.sh physical footprint 합 | 54MB |
+| 메모리, 12만 줄 | < 250MB | scripts/bench.sh physical footprint 합 | 92MB |
+| 앱 크기 | < 15MB | CI | 571KB |
 | 오프라인 | AI와 PR 조회를 빼면 모두 오프라인 동작 | 수동 | — |
 | 외부 요청 | 사용자가 고른 AI, GitHub, (v0.2) Bitbucket, Jira만. 외부 이미지는 사용자가 누를 때만 | 코드 리뷰와 테스트 | — |
 
@@ -158,7 +158,7 @@ frontend (내장)  index.html · app.js · diff-view.js · tree.js · ask.js · 
 ## 10. 마일스톤 (세부는 TASKS.md)
 | 단계 | 내용 | 릴리스 |
 |---|---|---|
-| M0 | 기반: 오픈소스 정리, CI, 포커스·키체인 POC, `griiy://` 프로토콜, 이벤트 채널, store, 에러 화면 | v0.1 |
+| M0 | 기반: 오픈소스 정리, CI, 포커스·키체인 POC, store, 에러 화면 | v0.1 |
 | M1 | 로컬 diff 뷰: 범위·작업 트리, 지연 로딩, 가상 스크롤, 구문 강조, 전체 파일, 검색, 단축키, 봤음 | v0.1 |
 | M2 | GitHub PR | v0.1 |
 | M3 | AI 질문: 백엔드 2종, 근거 ①②③, 인용 검증, 인젝션 방어, 저장 | v0.1 |
@@ -170,10 +170,10 @@ frontend (내장)  index.html · app.js · diff-view.js · tree.js · ask.js · 
 ## 11. 결정 기록
 | 질문 | 결정 (2026-10-12) |
 |---|---|
-| 스택 | Rust + wry (docs/SPIKE-rust-vs-tinyjs.md) |
+| 스택 | Swift + AppKit (2026-10-13, docs/SPIKE-native-ui.md, docs/PLAN-swift.md). 처음 결정은 Rust + wry였다 (docs/SPIKE-rust-vs-tinyjs.md) |
 | Bitbucket | Cloud만. Server/DC는 이후 |
 | 기본 모델 | `claude-opus-5-5` (설정으로 변경 가능) |
-| 서명·공증 | Apple Developer 계정 있음 → 서명·공증한 바이너리 배포 |
+| 서명·공증 | Apple Developer 계정 있음 → 서명·공증한 `.app` 배포 (GitHub Releases, Homebrew cask) |
 | 티켓 | v0.2에 Jira만. Linear 등은 이후 추가할 수 있게 `ticket` 모듈을 둔다 |
 | 이름 | `griiy` (graz → graya → grun → griiy, "그리 바꿨어?"). crates.io·Homebrew·npm·이 Mac 명령어에서 비어 있음 (2026-10-12 확인). 쓰지 않은 후보: `grun`(Homebrew `antlr`의 명령어와 겹침), `gree`(crates.io에 이미 있음), `gry`, `grya`, `griy` |
 | v0.1 범위 | 로컬 + GitHub + AI 질문 + 기본 diff 뷰 |

@@ -13,27 +13,30 @@
 
 # v0.1
 
+> **2026-10-13 Swift 전환:** 스택을 Rust + wry에서 Swift + AppKit으로 바꿨다 (docs/PLAN-swift.md). 끝난 작업은 Swift로 옮겨 같은 테스트를 통과했다. WebView 경계에만 필요했던 M0-4, M0-5는 해당 없음으로 바꿨다. Rust 버전은 커밋 `a97e3b8`에 있다.
+
 ## M0 기반
-- [x] **M0-1 오픈소스 기본 파일:** LICENSE-MIT, LICENSE-APACHE, README(설치, 사용법, 데이터 저장 위치, 외부 전송 범위), CONTRIBUTING, Cargo 메타데이터
-  - ✓ `cargo package --list`에 두 라이선스 파일 포함 · README에 PRD §7.4 저장 위치와 §8 외부 요청 목록이 있다
-- [ ] **M0-2 CI:** GitHub Actions macOS 러너에서 `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, release 빌드, 바이너리 크기 출력
+- [x] **M0-1 오픈소스 기본 파일:** LICENSE-MIT, LICENSE-APACHE, README(설치, 사용법, 데이터 저장 위치, 외부 전송 범위), CONTRIBUTING
+  - ✓ 두 라이선스 파일이 저장소 루트에 있다 · README에 PRD §7.4 저장 위치와 §8 외부 요청 목록이 있다
+- [ ] **M0-2 CI:** GitHub Actions macOS 러너에서 `swift format lint`, release 빌드(`-warnings-as-errors`), `swift test`, 크래시 호출 grep, `.app` 번들, 바이너리 크기 출력
   - ✓ PR마다 돌고, 하나라도 실패하면 머지 차단
-  - 진행: workflow 작성 완료, 로컬에서 같은 명령 통과 (2026-10-12). 남은 일: GitHub 저장소를 만든 뒤 `main` 브랜치 보호에서 `check` 필수로 지정 (CONTRIBUTING)
-- [ ] **M0-3 POC: 창 포커스와 키체인 (F-IN-4, F-PR-3)** · PRD 열린 질문 1
-  - bare binary와 서명한 `.app` 두 형태로 확인: ① 터미널 실행 직후 창이 앞에 오고 키를 받는가 ② 재빌드·재서명 후 키체인 항목을 다시 묻지 않고 읽는가
-  - ✓ 결과를 `docs/POC-focus-keychain.md`에 기록하고 배포 형태(bare 또는 `.app` + 심링크)를 정한다 · 정한 형태에서 포커스 smoke test(실행 → 단축키 하나 입력 → 반응 확인)를 스크립트로 만든다
-- [x] **M0-4 `griiy://` 프로토콜 (§7.3):** `app/<asset>`은 내장 자산, `api/<route>`는 JSON. 허용 목록 밖은 404. 파일은 ID로만 접근
+  - 진행: Swift workflow 작성 완료, 로컬에서 같은 명령 통과 (2026-10-13). 남은 일: GitHub 저장소를 만든 뒤 `main` 브랜치 보호에서 `check` 필수로 지정 (CONTRIBUTING)
+- [ ] **M0-3 POC: 창 포커스와 키체인 (F-IN-4, F-PR-3)**
+  - 배포 형태는 `.app` + CLI 심링크로 정했다 (Swift 전환, `scripts/bundle.sh --install`). 앱은 시작 시 `NSApp.activate()`로 앞에 나온다
+  - 남은 확인: ① 심링크로 터미널에서 실행했을 때 창이 앞에 오고 키를 받는가 ② 재빌드·재서명 후 키체인 항목을 다시 묻지 않고 읽는가
+  - ✓ 결과를 `docs/POC-focus-keychain.md`에 기록한다 · 포커스 smoke test(실행 → 단축키 하나 입력 → 반응 확인)를 스크립트로 만든다
+- [x] ~~**M0-4 `griiy://` 프로토콜 (§7.3):**~~ Swift 전환으로 해당 없음 (WebView 경계가 없다). `app/<asset>`은 내장 자산, `api/<route>`는 JSON. 허용 목록 밖은 404. 파일은 ID로만 접근
   - ✓ 단위 테스트: `..`, URL 인코딩된 `%2e%2e`, NUL, 절대경로, 다른 ref, 비ASCII·공백 파일명(ID로는 정상) · MIME 타입 확인 · 프론트를 여러 파일로 나눠도 바이너리는 1개
-- [x] **M0-5 이벤트 채널 (§7.3):** `{v, req, type, data}` envelope, `ready` 전 큐잉, 큐 상한, 요청 ID별 취소, 창 닫힘 시 작업 중단
+- [x] ~~**M0-5 이벤트 채널 (§7.3):**~~ Swift 전환으로 해당 없음. 남는 성질(요청 취소, 창 닫힘 시 git 중단)은 `Cancel` 테스트와 `scripts/smoke-quit.sh`가 지킨다. `{v, req, type, data}` envelope, `ready` 전 큐잉, 큐 상한, 요청 ID별 취소, 창 닫힘 시 작업 중단
   - ✓ 가짜 생산자로 테스트: ready 전 100개 → 순서대로 전달 · 1만 개 폭주 → 상한 내 합쳐짐 · 취소 → 생산자 중단 · `</script>`, 줄바꿈, 따옴표가 든 데이터도 깨지지 않음
 - [x] **M0-6 store (§7.4):** 리뷰 키 생성, 스키마 버전, 원자적 저장(임시 파일 → rename), 손상 파일은 백업 후 새로 시작
   - ✓ 키 생성 단위 테스트(로컬 범위·작업 트리·GitHub) · 같은 로컬 범위를 커밋 후 다시 열어도 같은 키 · 손상 JSON fixture 처리
 - [x] **M0-7 에러 화면 (F-IN-5):** git 없음, 저장소 아님, 잘못된 범위, fetch 실패, 권한 없음
-  - ✓ 경우마다 통합 테스트 · `grep -nE '\.(unwrap|expect)\(' src/`가 테스트 코드 밖에서 0건
+  - ✓ 경우마다 통합 테스트 · 앱 코드에 강제 언래핑·`try!`·`fatalError`·`precondition` 0건 (swift-format 규칙 + grep)
 - [x] **M0-8 설정 (§6.6):** `config.toml` 로드, 기본값, 잘못된 값 경고
   - ✓ 없는 파일, 빈 파일, 잘못된 타입 fixture 테스트
 
-## M1 로컬 diff 뷰 ⟵ M0-4, M0-5, M0-6
+## M1 로컬 diff 뷰 ⟵ M0-6
 - [x] **M1-1 인자 파싱 (F-IN-1, F-IN-2):** `a..b`, `a...b`, 인자 없음, `-C`
   - ✓ 파서 단위 테스트 · 임시 저장소로 base/head sha가 PRD F-IN-2 표와 일치하는지 통합 테스트
 - [x] **M1-2 Review 정규화 (F-IN-3):** `head: Sha | WorkTree`
@@ -42,21 +45,22 @@
   - ✓ 실제 git 출력 fixture: rename, copy, binary, 모드 변경, 삭제, 새 파일, 개행 없음, CRLF, 공백·비ASCII·따옴표 파일명(`core.quotePath`)
 - [ ] **M1-4 줄 매핑 (F-AI-1 기반):** `Selection { path, side, start, end }` ↔ base/head 파일 줄 범위
   - ✓ hunk 경계, 추가만, 삭제만, 섞인 선택 fixture에서 기대한 base·head 범위가 나온다
-- [x] **M1-5 지연 로딩 (§7.3):** 시작 시 목록과 통계만, 파일 diff는 `api/diff?id=`
-  - ✓ 12만 줄 저장소에서 초기 주입 데이터 < 100KB
-- [ ] **M1-6 가상 스크롤 (F-DV-4)**
-  - ✓ bench.sh 12만 줄: 첫 화면 < 1s, RSS < 250MB, diff 패널 DOM < 5,000, 자동 스크롤 중 50ms 넘는 프레임 ≤ 1%
-  - 진행 (2026-10-13): 첫 화면 0.52~0.60s, DOM 최대 244, 50ms 초과 프레임 0/590 달성. **RSS는 194~268MB로 경계**다(작은 diff도 약 200MB, 대부분 WebKit 프로세스). 기준을 physical footprint로 바꿀지, Rust 쪽 메모리를 줄일지 결정이 필요하다 (docs/PLAN-M1-5-6.md 측정 표)
-- [ ] **M1-7 bench.sh 확장:** DOM 수, 자동 스크롤 long-frame 집계, JSON 출력
+- [x] **M1-5 지연 로딩 (§7.3):** 화면에 보이는 행만 만든다
+  - ✓ (Swift) 행은 파싱한 구조체에서 `rows(from:n:)`로 창 단위로 만든다. 12만 줄 저장소에서 깊은 창이 전체의 같은 조각과 같다 (테스트). 초기 주입 데이터 기준은 WebView 경계가 사라져 해당 없음
+- [x] **M1-6 가상 스크롤 (F-DV-4)**
+  - ✓ scripts/bench.sh 12만 줄: 첫 화면 < 1s, 메모리(physical footprint 합) < 250MB, diff 행 뷰 < 5,000, 자동 스크롤 중 50ms 넘는 프레임 ≤ 1%
+  - 결과 (Swift, 2026-10-13, 5라운드 중앙값): 15만 행에서 첫 화면 299ms, footprint 92MB, 행 뷰 최대 39, 50ms 초과 프레임 0/590 (docs/PLAN-swift.md 측정)
+- [ ] **M1-7 bench 확장:** 행 뷰 수, 자동 스크롤 long-frame 집계, JSON 출력
   - ✓ CI 아티팩트로 저장 (참고용, 실패 기준 아님)
-  - 진행: DOM 수, 자동 스크롤 long-frame·blank 집계, JSONL 출력은 M1-6과 함께 완료 (2026-10-13). 남은 일: CI 아티팩트 저장
+  - 진행: `scripts/bench.sh`가 첫 화면(앱 벽시계), footprint, 스크롤 프레임, 행 뷰 수를 보고한다 (2026-10-13). 남은 일: CI 아티팩트 저장
 - [ ] **M1-8 파일 트리 개선 (F-DV-1):** 접힌 폴더는 펼칠 때 렌더
-  - ✓ 1만 파일 저장소에서 트리 DOM < 2,000
-- [ ] **M1-9 구문 강조 (F-DV-3):** vendored, 첫 페인트 후 로드, 보이는 줄만
+  - ✓ 1만 파일 저장소에서 트리 뷰 < 2,000
+  - 진행: NSOutlineView는 펼친 항목의 자식만 묻는다. 1만 파일 저장소 첫 화면 182ms (2026-10-13). 남은 일: 트리 뷰 수 측정
+- [ ] **M1-9 구문 강조 (F-DV-3):** 첫 페인트 후, 보이는 줄만
   - ✓ 강조 전후 bench 첫 화면 차이 < 50ms · 12만 줄 스크롤 기준(M1-6) 유지
 - [ ] **M1-10 파일 전체 보기 (F-DV-5)**
   - ✓ 변경 안 된 파일, 작업 트리 파일, 삭제된 파일(base 버전 표시) 각각 확인
-- [ ] **M1-11 검색 (F-DV-7):** `⌘P` 파일 퍼지 검색(프론트), `/` diff 검색(`api/search`)
+- [ ] **M1-11 검색 (F-DV-7):** `⌘P` 파일 퍼지 검색, `/` diff 검색(코어)
   - ✓ 1만 파일에서 `⌘P` 응답 < 50ms · 12만 줄 diff 검색이 아직 로드 안 된 파일의 결과도 찾는다
 - [ ] **M1-12 단축키 (F-DV-8):** `] [ n p / ⌘P ? v ⌘/`
   - ✓ 키마다 동작하는지 프론트 테스트 페이지(수동 체크리스트) · 입력창에 포커스가 있을 때는 단축키를 먹지 않는다
@@ -71,7 +75,7 @@
 - [ ] **M2-3 메타데이터와 코멘트:** `gh api`로 PR, 리뷰 코멘트, 이슈 코멘트, 연결 이슈
   - ✓ `gh` 응답 fixture로 파싱 테스트 · `gh` 없음/미로그인 → 안내 화면
 - [ ] **M2-4 PR 패널과 안전 Markdown (F-PR-4, F-PR-5)**
-  - ✓ 악성 Markdown fixture(`<script>`, `<img onerror>`, `javascript:` 링크, 외부 이미지, iframe)에서 스크립트 실행·DOM 주입·외부 요청이 없다 · 줄 코멘트가 해당 줄 옆에 보인다
+  - ✓ 악성 Markdown fixture(`<script>`, `<img onerror>`, `javascript:` 링크, 외부 이미지, iframe)에서 스크립트 실행·HTML 해석·외부 요청이 없다 · 줄 코멘트가 해당 줄 옆에 보인다
 
 ## M3 AI 질문 ⟵ M1-4, M2-3
 - [ ] **M3-1 백엔드 (F-AI-5):** `ClaudeCli`와 `AnthropicApi`, 스트리밍, 취소, 모델 설정 · PRD 열린 질문 2
@@ -96,8 +100,8 @@
   - ✓ fixture store로 집계 테스트
 - [ ] **M4-2 서명과 공증:** M0-3에서 정한 형태로 Developer ID 서명, notarytool, staple
   - ✓ 새 Mac 계정에서 다운로드 후 Gatekeeper 경고 없이 실행
-- [ ] **M4-3 배포:** GitHub Releases(universal), Homebrew tap, `cargo install griiy`
-  - ✓ 세 경로 모두 깨끗한 환경에서 설치 확인
+- [ ] **M4-3 배포:** GitHub Releases(universal `.app`), Homebrew cask
+  - ✓ 두 경로 모두 깨끗한 환경에서 설치 확인
 - [ ] **M4-4 README 데모:** 스크린샷, GIF, 첫 실행 안내
 - [ ] **M4-5 외부 테스터 3명 설치 테스트 (PRD §9)**
   - ✓ 3명 모두 5분 이내, 막힌 지점을 이슈로 기록

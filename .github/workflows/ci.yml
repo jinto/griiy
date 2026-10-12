@@ -9,15 +9,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-      - run: cargo build --release
-      - name: No unwrap/expect in app code
-        run: "! grep -rnE '\\.(unwrap|expect)\\(' src/"
+      - run: swift --version
+      - run: swift format lint --strict --recursive Sources Tests
+      - run: swift build -c release -Xswiftc -warnings-as-errors
+      - run: swift test
+      - name: No crash calls in app code
+        run: "! grep -rnE 'fatalError|precondition\\(|unsafelyUnwrapped' Sources/"
+      - run: scripts/bundle.sh
       - name: Binary size
-        run: ls -l target/release/griiy | awk '{ printf "binary: %.2f MB\n", $5 / 1048576 }' | tee -a "$GITHUB_STEP_SUMMARY"
+        run: ls -l .build/release/griiy | awk '{ printf "binary: %.2f MB\n", $5 / 1048576 }' | tee -a "$GITHUB_STEP_SUMMARY"

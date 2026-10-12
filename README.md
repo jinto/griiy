@@ -10,13 +10,13 @@ PR comments and issues.
 
 ## Install
 
-Requires macOS and git. Build from source with Rust 1.88+:
+Requires macOS 15+ and git. Build from source with Xcode 26 (Swift 6.2+):
 
 ```sh
-cargo install --path .
+scripts/bundle.sh --install   # builds griiy.app and links /usr/local/bin/griiy to it
 ```
 
-Homebrew and prebuilt signed binaries will come with the first release.
+Homebrew and a signed, notarized app will come with the first release.
 
 ## Use
 

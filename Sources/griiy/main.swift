@@ -1,0 +1,238 @@
+// griiy: the AppKit window over GriiyCore. Arguments are parsed before any window exists; the
+// review opens on a thread of its own while the window comes up, and closing the window kills
+// any git still running.
+import AppKit
+import Foundation
+import GriiyCore
+
+private func hex(_ light: UInt32, _ dark: UInt32) -> NSColor {
+    func color(_ v: UInt32) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat(v >> 16 & 255) / 255, green: CGFloat(v >> 8 & 255) / 255, blue: CGFloat(v & 255) / 255,
+            alpha: 1)
+    }
+    return NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color(dark) : color(light) }
+}
+
+/// The colors of the WebKit version's app.css, light and dark.
+enum Palette {
+    static let fg = hex(0x1f2328, 0xe6edf3), mut = hex(0x656d76, 0x8d96a0), side = hex(0xf6f8fa, 0x161b22)
+    static let add = hex(0xdafbe1, 0x12261e), del = hex(0xffebe9, 0x25171c), hunk = hex(0xddf4ff, 0x121d2f)
+    static let addText = hex(0x1a7f37, 0x3fb950), delText = hex(0xcf222e, 0xf85149), bg = hex(0xffffff, 0x0d1117)
+}
+
+// ---- Bench marks: with GRIIY_MARK set, two JSON lines go to that file (scripts/bench.sh) ----
+let markPath = ProcessInfo.processInfo.environment["GRIIY_MARK"]
+
+func mark(_ body: String) {
+    guard let markPath else { return }
+    let line = "{\"type\":\"mark\",\"wall\":\(Int(Date().timeIntervalSince1970 * 1000)),\(body)}\n"
+    if !FileManager.default.fileExists(atPath: markPath) {
+        FileManager.default.createFile(atPath: markPath, contents: nil)
+    }
+    guard let h = FileHandle(forWritingAtPath: markPath) else { return }
+    h.seekToEndOfFile()
+    h.write(Data(line.utf8))
+    h.closeFile()
+}
+
+private func jsonString(_ s: String) -> String {
+    String(decoding: (try? JSONEncoder().encode(s)) ?? Data("\"\"".utf8), as: UTF8.self)
+}
+
+final class App: NSObject, NSApplicationDelegate {
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+    let header = NSTextField(labelWithString: "…")
+    let diff = DiffController()
+    let tree = TreeController()
+    let message = NSTextField(wrappingLabelWithString: "")
+    /// Stops the git opening the review when the window closes.
+    let cancel = Cancel()
+    private var review: Review?
+    private enum Phase {
+        case waiting
+        case error(String)
+        case empty, ready, done
+    }
+    private var phase = Phase.waiting
+
+    override init() {
+        super.init()
+        window.title = "griiy"
+        window.center()
+        let content = NSView(frame: window.contentRect(forFrameRect: window.frame))
+        window.contentView = content
+        let b = content.bounds
+        header.frame = NSRect(x: 12, y: b.height - 26, width: b.width - 24, height: 18)
+        header.autoresizingMask = [.width, .minYMargin]
+        header.lineBreakMode = .byTruncatingMiddle
+        let line = NSBox(frame: NSRect(x: 0, y: b.height - 33, width: b.width, height: 1))
+        line.boxType = .separator
+        line.autoresizingMask = [.width, .minYMargin]
+        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: b.width, height: b.height - 33))
+        split.isVertical = true
+        split.dividerStyle = .thin
+        split.autoresizingMask = [.width, .height]
+        tree.scroll.frame = NSRect(x: 0, y: 0, width: 260, height: split.bounds.height)
+        let right = NSView(frame: NSRect(x: 261, y: 0, width: b.width - 261, height: split.bounds.height))
+        diff.scroll.frame = right.bounds
+        diff.scroll.autoresizingMask = [.width, .height]
+        message.frame = right.bounds.insetBy(dx: 32, dy: 32)
+        message.autoresizingMask = [.width, .height]
+        message.isHidden = true
+        message.isSelectable = true
+        right.addSubview(diff.scroll)
+        right.addSubview(message)
+        split.addArrangedSubview(tree.scroll)
+        split.addArrangedSubview(right)
+        split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        for v in [header, line, split] { content.addSubview(v) }
+        tree.onPick = { [unowned self] f in diff.scrollTo(file: f) }
+        // The first display tick after rows are on screen writes the first-paint mark (tick).
+        content.displayLink(target: self, selector: #selector(tick(_:))).add(to: .main, forMode: .common)
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        window.makeKeyAndOrderFront(nil)
+        // A plain executable launched from a terminal must pull itself to the front (M0-3).
+        NSApp.activate()
+        window.makeFirstResponder(diff.table)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // git runs in its own process group, so it would outlive us: stop it.
+        cancel.cancel()
+        return .terminateNow
+    }
+
+    /// On the main thread, with what Review.open returned.
+    func loaded(_ result: Result<Review, GitError>) {
+        switch result {
+        case .failure(let e):
+            showMessage(e.title, e.detail, e.hint)
+            phase = .error(e.title)
+        case .success(let r):
+            review = r
+            diff.load(r.files)
+            header.attributedStringValue = headerText(r, total: nil)
+            if r.files.isEmpty {
+                let hint = r.head == .workTree ? " To see the last commit: griiy HEAD~1..HEAD" : ""
+                showMessage("No changes." + hint, "", "", plain: true)
+                phase = .empty
+            } else {
+                phase = .ready
+            }
+        }
+    }
+
+    private func headerText(_ r: Review, total: Int?) -> NSAttributedString {
+        let s = NSMutableAttributedString(
+            string: r.repo.string, attributes: [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: Palette.fg])
+        var rest = "   \(r.spec.label) · \(r.files.count) changed"
+        if let total { rest += " / \(total) files" }
+        s.append(
+            NSAttributedString(
+                string: rest, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: Palette.mut]))
+        return s
+    }
+
+    private func showMessage(_ title: String, _ detail: String, _ hint: String, plain: Bool = false) {
+        let s = NSMutableAttributedString()
+        if plain {
+            s.append(
+                NSAttributedString(
+                    string: title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: Palette.mut]))
+        } else {
+            s.append(
+                NSAttributedString(
+                    string: title + "\n\n",
+                    attributes: [.font: NSFont.boldSystemFont(ofSize: 18), .foregroundColor: Palette.fg]))
+            if !detail.isEmpty {
+                s.append(
+                    NSAttributedString(
+                        string: detail + "\n\n", attributes: [.font: mono, .foregroundColor: Palette.mut]))
+            }
+            s.append(
+                NSAttributedString(
+                    string: hint, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: Palette.fg]))
+        }
+        message.attributedStringValue = s
+        message.isHidden = false
+        diff.scroll.isHidden = true
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        switch phase {
+        case .waiting, .done: return
+        case .error(let title):
+            mark("\"error\":\(jsonString(title))")
+            mark("\"scroll\":null")
+        case .empty:
+            mark("\"git\":\(review?.gitMs ?? 0),\"rows\":0,\"files\":0,\"views\":0")
+            mark("\"scroll\":null")
+            fillTree()
+        case .ready:
+            guard diff.liveRowViews() > 0 else { return }
+            mark(
+                "\"git\":\(review?.gitMs ?? 0),\"rows\":\(diff.total),\"files\":\(diff.files.count),\"views\":\(diff.liveRowViews())"
+            )
+            fillTree()
+            if markPath != nil { diff.startBench() }
+        }
+        phase = .done
+        link.invalidate()
+    }
+
+    /// After first paint: the tree of every tracked file isn't needed to show the diff.
+    private func fillTree() {
+        guard let r = review else { return }
+        let n = tree.fill(r.files, tracked: r.tracked)
+        header.attributedStringValue = headerText(r, total: n)
+    }
+}
+
+// Usage errors go to the terminal before any window exists. Arguments as raw bytes: a repo path
+// need not be UTF-8.
+let rawArgs = (1..<Int(CommandLine.argc)).compactMap { i in
+    CommandLine.unsafeArgv[i].map {
+        Array(UnsafeBufferPointer(start: $0, count: strlen($0))).map { UInt8(bitPattern: $0) }
+    }
+}
+let args: Args
+switch parseArgs(rawArgs) {
+case .success(let a): args = a
+case .failure(let e):
+    FileHandle.standardError.write(Data((e.message + "\n").utf8))
+    exit(2)
+}
+// Settings are read now but mostly used by features still in progress; bad values only warn.
+for warning in appDir().map({ loadConfig($0.appending("config.toml")).1 }) ?? [] {
+    FileHandle.standardError.write(Data("griiy: config: \(warning)\n".utf8))
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+let appMenu = NSMenu()
+let editMenu = NSMenu(title: "Edit")
+appMenu.addItem(withTitle: "Quit griiy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+let menu = NSMenu()
+for sub in [appMenu, editMenu] {
+    let item = NSMenuItem()
+    item.submenu = sub
+    menu.addItem(item)
+}
+app.mainMenu = menu
+let ui = App()
+app.delegate = ui
+// git runs while the window is being created. Review.open blocks, so it gets a thread, not a Task.
+let cancel = ui.cancel
+Thread.detachNewThread {
+    let result = Result { () throws(GitError) in try Review.open(args.repo, args.spec, cancel: cancel) }
+    DispatchQueue.main.async { MainActor.assumeIsolated { ui.loaded(result) } }
+}
+app.run()
