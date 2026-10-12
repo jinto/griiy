@@ -1,7 +1,7 @@
 mod common;
 
 use common::{repo, write};
-use griiy::{git::Review, protocol::handle};
+use griiy::{args::Spec, git::Review, protocol::handle};
 use serde_json::Value;
 use wry::http::Uri;
 
@@ -55,7 +55,7 @@ fn files_are_reachable_only_by_id() {
     for f in ["한글 파일.txt", "a b.txt", "plain.txt"] {
         write(&r.0, f, "a\nchanged\n");
     }
-    let review = Review::open(&r.0).unwrap();
+    let review = Review::open(&r.0, &Spec::default()).unwrap();
     assert_eq!(review.files.len(), 3);
     for (id, path) in review.files.iter().enumerate() {
         let res = handle(&format!("griiy://api/diff?id={id}").parse::<Uri>().unwrap(), Some(&review));

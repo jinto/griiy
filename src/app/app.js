@@ -74,19 +74,19 @@ const cls = l => l[0] === '+' ? 'ad' : l[0] === '-' ? 'de' : l.startsWith('@@') 
   post({ type: 'ready' });
   const { review, error } = window.__GRIIY__;
   if (error) { showError(error); return requestAnimationFrame(() => setTimeout(() => ready({ error: error.title }))); }
-  const { repo, source, text, tracked, gitMs } = review;
+  const { repo, label, head, text, tracked, gitMs } = review;
   const t1 = performance.now();
   const files = parse(text);
   document.getElementById('repo').textContent = repo;
   const all = tracked.split('\n').filter(Boolean);
-  document.getElementById('src').textContent = `${source} · ${files.length} changed / ${all.length} files`;
+  document.getElementById('src').textContent = `${label} · ${files.length} changed / ${all.length} files`;
   const changed = new Map(files.map((f, i) => [f.name, { ...f, i }]));
   // Deleted files aren't in ls-files but still belong in the tree.
   document.getElementById('files').innerHTML = renderTree(buildTree(new Set([...all, ...changed.keys()])), changed)[0];
   document.getElementById('diff').innerHTML = files.length ? files.map((f, i) =>
     `<section id="f${i}"><h2>${esc(f.name)}</h2><pre>${
       f.lines.map(l => `<div class="${cls(l)}">${esc(l)}</div>`).join('')}</pre></section>`).join('')
-    : '<p class="empty">No changes.</p>';
+    : `<p class="empty">No changes.${head === 'worktree' ? ' To see the last commit: griiy HEAD~1..HEAD' : ''}</p>`;
   document.getElementById('files').onclick = e => {
     const a = e.target.closest('a[href]'); if (!a) return;
     document.querySelectorAll('nav a.on').forEach(x => x.classList.remove('on'));

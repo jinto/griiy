@@ -12,7 +12,7 @@ cargo build --release
 ! grep -rnE '\.(unwrap|expect)\(' src/   # no panics in app code; tests live in tests/
 ```
 
-`./bench.sh <repo> [runs]` measures launch-to-first-paint and memory against a real repository.
+`./bench.sh <repo> [runs] [range]` measures launch-to-first-paint and memory against a real repository.
 
 ## Layout
 

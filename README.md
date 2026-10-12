@@ -4,8 +4,8 @@ A small, fast macOS app for reviewing changes. Point it at a range or a PR, read
 and (soon) select lines and ask *"why did this change?"*, answered with citations to commits,
 PR comments and issues.
 
-> Status: early. Today griiy opens your working-tree changes (or the last commit on a clean tree)
-> in a window with a file tree. Ranges, GitHub PRs and AI questions are in progress
+> Status: early. Today griiy opens your working-tree changes or a commit range in a window with a
+> file tree. GitHub PRs and AI questions are in progress
 > ([PRD](docs/PRD.md), [tasks](docs/TASKS.md)).
 
 ## Install
@@ -21,11 +21,16 @@ Homebrew and prebuilt signed binaries will come with the first release.
 ## Use
 
 ```sh
-griiy            # current repo: uncommitted changes (staged and unstaged) vs HEAD
-griiy path/to/repo
+griiy                    # uncommitted changes (staged and unstaged) vs HEAD
+griiy main               # working tree vs main
+griiy main..feature      # feature vs main, endpoint to endpoint
+griiy main...feature     # what feature changed since it branched off main (like a PR)
+griiy -C path/to/repo    # another repository; combines with any of the above
 ```
 
-Planned (v0.1): `griiy main...feature`, `griiy a..b`, `griiy https://github.com/o/r/pull/42`, `griiy '#42'`.
+Ranges mean what they mean to `git diff`; a missing side is `HEAD`. Untracked files are not shown.
+
+Planned (v0.1): `griiy https://github.com/o/r/pull/42`, `griiy '#42'`.
 
 ## Where griiy stores data
 

@@ -2,9 +2,9 @@
 # Launch each build against a repo, time until first paint (plus the page's own
 # phase timings: git, data hand-off, render), sum RSS of the
 # app plus the WebKit helper processes it spawned (they're launchd children).
-# usage: ./bench.sh <repo> [runs]
+# usage: ./bench.sh <repo> [runs] [range]   e.g. ./bench.sh ~/src/linux 3 HEAD~50..HEAD
 set -u
-REPO=$1; RUNS=${2:-3}
+REPO=$1; RUNS=${2:-3}; RANGE=${3:-}
 ROOT=$(cd "$(dirname "$0")" && pwd)
 APPS=("griiy:$ROOT/target/release/griiy")
 MARK=$(mktemp -u)
@@ -17,7 +17,7 @@ for entry in "${APPS[@]}"; do
   for i in $(seq "$RUNS"); do
     rm -f "$MARK"; before=$(webkit_pids)
     t0=$(now_ms)
-    GRIIY_MARK=$MARK "$bin" "$REPO" >/dev/null 2>&1 &
+    GRIIY_MARK=$MARK "$bin" -C "$REPO" ${RANGE:+"$RANGE"} >/dev/null 2>&1 &
     pid=$!
     until [ -f "$MARK" ]; do
       sleep 0.01

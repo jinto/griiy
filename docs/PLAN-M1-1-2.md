@@ -68,3 +68,16 @@ impl Review { pub fn open(dir: &Path, spec: &Spec) -> Result<Review, Error> }
 
 ## 완료 조건
 TASKS M1-1 ✓, M1-2 ✓ + CONTRIBUTING 검사 전체 통과(fmt, clippy `-D warnings`, test, release 빌드, `unwrap/expect` 0건) + README와 `bench.sh` 갱신 → codex, fable, ponytail 리뷰
+
+## 리뷰 반영 (codex, fable · 2026-10-13)
+D1, D2는 두 리뷰 모두 찬성했다. 아래 항목이 위 본문보다 우선한다.
+- **R1 `..`, `...`**: 사용법 에러로 막지 않는다. 빈 쪽은 HEAD라는 규칙을 그대로 적용해 `HEAD..HEAD`(빈 diff)로 둔다 (git과 같음)
+- **R2 `-`로 시작하는 위치 인자**는 `..`가 들어 있어도(`--output=x..HEAD`) 사용법 에러로 처리한다. 이 검사가 범위 분리보다 먼저다
+- **R3 NoCommits**: `resolve`가 실패하면 `rev-parse --verify HEAD`를 확인한다. 이것도 실패하면 `NoCommits`로 바꾼다 (확인은 실패 경로에서만 하므로 시작 비용이 없다)
+- **R4 merge-base**: git CLI가 출력하는 하나(`git diff a...b`와 같은 선택)를 쓴다. 공통 조상이 없을 때 git은 exit 1에 stderr가 비어 있다. 그러므로 stderr 내용과 상관없이 실패하면 `BadRange`로 바꾼다. 여러 base를 합성하는 처리는 하지 않는다
+- **R5 `Review`는 `spec: Spec`를 보관한다** (M1-13에서 `store::Source`에 ref 이름을 넘기기 위해). `label`은 `to_json`에서 만든다. diff 인자는 `Vec<String>`이다. `Spec::default()`는 `WorkTree { base: "HEAD" }`다
+- **R6 빈 diff 안내**: 작업 트리 모드에서 변경이 없으면 `app.js`의 빈 상태 문구를 "No changes. To see the last commit: griiy HEAD~1..HEAD"로 한다
+- **R7 hint 문구**: `NotARepo`와 `BadRange`의 hint를 `griiy -C path/to/repo`로 바꾼다
+- **테스트 추가**: `to_json` 형태(`base`, `head: "worktree"`, `label`, `source` 없음) · untracked 파일은 `files`에 없음 · `--output=x..HEAD`는 사용법 에러 · `a...b`의 base가 `git merge-base` 출력과 같음 · 빈 저장소의 `no_commits_yet`는 그대로 green
+- **미테스트로 둠**: `-C`를 `main.rs`에서 `Review::open`으로 넘기는 배선 (파서 테스트와 `Review::open(dir)` 테스트로 양쪽을 덮는다)
+- **이후 메모**: M1-13 `griiy main`과 `griiy`가 `Source::WorkTree` 키로 충돌한다 · M4 `griiy stats` 서브커맨드 검사는 범위 파싱보다 먼저 해야 한다

@@ -1,6 +1,6 @@
-use griiy::{config, events::Channel, git::Review, protocol};
+use griiy::{args, config, events::Channel, git::Review, protocol};
 use serde_json::{Value, json};
-use std::{path::PathBuf, process::ExitCode, sync::Arc};
+use std::{process::ExitCode, sync::Arc};
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -12,7 +12,15 @@ use wry::WebViewBuilder;
 struct Flush;
 
 fn main() -> ExitCode {
-    match run() {
+    // Usage errors go to the terminal; everything after this shows in the window (F-IN-5).
+    let args = match args::parse(std::env::args_os().skip(1)) {
+        Ok(a) => a,
+        Err(usage) => {
+            eprintln!("{usage}");
+            return ExitCode::from(2);
+        }
+    };
+    match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         // Only failures that can't be shown in a window end up here.
         Err(e) => {
@@ -22,12 +30,11 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| ".".into()));
+fn run(args: args::Args) -> Result<(), Box<dyn std::error::Error>> {
     for w in griiy::app_dir().map(|d| config::load(&d.join("config.toml")).1).unwrap_or_default() {
         eprintln!("griiy: config: {w}");
     }
-    let review = Review::open(&dir);
+    let review = Review::open(&args.repo, &args.spec);
     let init = match &review {
         Ok(r) => json!({ "review": r.to_json() }),
         Err(e) => json!({ "error": e.to_json() }),

@@ -2,7 +2,10 @@
 mod common;
 
 use common::{TempDir, repo};
-use griiy::git::{Error, Review, fetch, resolve, run};
+use griiy::{
+    args::Spec,
+    git::{Error, Review, fetch, resolve, run},
+};
 use std::os::unix::fs::PermissionsExt;
 
 fn assert_explained(e: &Error) {
@@ -21,10 +24,10 @@ fn git_missing() {
 #[test]
 fn not_a_repository() {
     let t = TempDir::new("norepo");
-    let e = Review::open(&t.0).err().unwrap();
+    let e = Review::open(&t.0, &Spec::default()).err().unwrap();
     assert!(matches!(e, Error::NotARepo { .. }), "{e:?}");
     assert_explained(&e);
-    let e = Review::open(&t.0.join("does-not-exist")).err().unwrap();
+    let e = Review::open(&t.0.join("does-not-exist"), &Spec::default()).err().unwrap();
     assert!(matches!(e, Error::NotARepo { .. }), "{e:?}");
 }
 
@@ -54,7 +57,7 @@ fn permission_denied() {
     std::fs::create_dir(&locked).unwrap();
     std::fs::set_permissions(&locked, PermissionsExt::from_mode(0o000)).unwrap();
     let readable = std::fs::read_dir(&locked).is_ok(); // true when running as root
-    let result = Review::open(&locked).err();
+    let result = Review::open(&locked, &Spec::default()).err();
     std::fs::set_permissions(&locked, PermissionsExt::from_mode(0o755)).unwrap(); // so TempDir can clean up
     if readable {
         eprintln!("skipped: running as root");
@@ -69,7 +72,7 @@ fn permission_denied() {
 fn no_commits_yet() {
     let t = TempDir::new("empty");
     common::git(&t.0, &["init", "-q"]);
-    let e = Review::open(&t.0).err().unwrap();
+    let e = Review::open(&t.0, &Spec::default()).err().unwrap();
     assert!(matches!(e, Error::NoCommits { .. }), "{e:?}");
     assert_explained(&e);
 }
@@ -89,11 +92,4 @@ fn every_error_explains_itself() {
     ] {
         assert_explained(&e);
     }
-}
-
-#[test]
-fn a_clean_tree_shows_the_last_commit() {
-    let r = repo("clean", &[("a.txt", "a\n")]);
-    let review = Review::open(&r.0).unwrap();
-    assert_eq!((review.source, review.files.as_slice()), ("git show HEAD", ["a.txt".to_string()].as_slice()));
 }

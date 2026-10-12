@@ -34,9 +34,9 @@
   - ✓ 없는 파일, 빈 파일, 잘못된 타입 fixture 테스트
 
 ## M1 로컬 diff 뷰 ⟵ M0-4, M0-5, M0-6
-- [ ] **M1-1 인자 파싱 (F-IN-1, F-IN-2):** `a..b`, `a...b`, 인자 없음, `-C`
+- [x] **M1-1 인자 파싱 (F-IN-1, F-IN-2):** `a..b`, `a...b`, 인자 없음, `-C`
   - ✓ 파서 단위 테스트 · 임시 저장소로 base/head sha가 PRD F-IN-2 표와 일치하는지 통합 테스트
-- [ ] **M1-2 Review 정규화 (F-IN-3):** `head: Sha | WorkTree`
+- [x] **M1-2 Review 정규화 (F-IN-3):** `head: Sha | WorkTree`
   - ✓ 작업 트리 모드에서 스테이징한 변경과 안 한 변경이 모두 보인다
 - [ ] **M1-3 diff 파서 (F-DV-10):** 파일/hunk/줄 구조와 메타데이터
   - ✓ 실제 git 출력 fixture: rename, copy, binary, 모드 변경, 삭제, 새 파일, 개행 없음, CRLF, 공백·비ASCII·따옴표 파일명(`core.quotePath`)

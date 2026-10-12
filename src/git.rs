@@ -1,5 +1,6 @@
 //! git CLI wrapper and the errors shown on the in-window error screen (F-IN-5).
 
+use crate::args::Spec;
 use serde_json::{Value, json};
 use std::{
     io::{ErrorKind, Read},
@@ -42,10 +43,10 @@ impl Error {
             Error::GitMissing => {
                 "Install git (xcode-select --install or brew install git) and make sure it is on PATH."
             }
-            Error::NotARepo { .. } => "Run griiy inside a git repository, or pass its path: griiy path/to/repo.",
+            Error::NotARepo { .. } => "Run griiy inside a git repository, or pass its path: griiy -C path/to/repo.",
             Error::NoCommits { .. } => "Make a first commit, then run griiy again.",
             Error::BadRange { .. } => {
-                "Check the branch or commit names. Ranges look like main..feature or main...feature."
+                "Check the branch or commit names. Ranges look like main..feature or main...feature. To open another repository: griiy -C path/to/repo."
             }
             Error::FetchFailed { .. } => "Check your network and that the remote exists, then run griiy again.",
             Error::PermissionDenied { .. } => {
@@ -149,7 +150,7 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, Error> {
     run("git", repo, args, None).map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
-/// Commit sha for a revision (M1-1 builds ranges on this).
+/// Commit sha for a revision. The only place user-typed revisions reach git.
 pub fn resolve(repo: &Path, rev: &str) -> Result<String, Error> {
     let spec = format!("{rev}^{{commit}}");
     match git(repo, &["rev-parse", "--verify", "--end-of-options", &spec]) {
@@ -168,12 +169,21 @@ pub fn fetch(repo: &Path, remote: &str, refspec: &str) -> Result<(), Error> {
     }
 }
 
-/// What the window shows. Spike semantics until M1-2: working tree vs HEAD,
-/// or the last commit when the tree is clean.
+/// The other side of a review: a commit, or the working tree (index included).
+#[derive(Debug, PartialEq)]
+pub enum Head {
+    Sha(String),
+    WorkTree,
+}
+
+/// What the window shows (F-IN-3). Every diff is computed from the resolved shas, so
+/// user-typed revisions never reach git outside `resolve`.
 pub struct Review {
     pub repo: PathBuf,
-    pub source: &'static str,
-    diff: &'static [&'static str],
+    /// Kept for the store key (M1-13), which wants the ref names, not the shas.
+    pub spec: Spec,
+    pub base: String,
+    pub head: Head,
     pub text: String,
     /// Changed paths; a path's index here is its file ID for `griiy://api/diff?id=`.
     pub files: Vec<String>,
@@ -181,38 +191,68 @@ pub struct Review {
     pub git_ms: u64,
 }
 
-const DIFF_HEAD: &[&str] = &["diff", "HEAD", "--no-color", "--no-ext-diff"];
-const SHOW_HEAD: &[&str] = &["show", "HEAD", "--no-color", "--no-ext-diff", "--format="];
-
 impl Review {
-    pub fn open(dir: &Path) -> Result<Review, Error> {
+    pub fn open(dir: &Path, spec: &Spec) -> Result<Review, Error> {
         let start = Instant::now();
         let repo = PathBuf::from(git(dir, &["rev-parse", "--show-toplevel"])?.trim_end_matches('\n'));
-        let text = git(&repo, DIFF_HEAD).map_err(|e| match e {
-            Error::Git { detail } if detail.contains("ambiguous argument 'HEAD'") => {
-                Error::NoCommits { path: repo.display().to_string() }
-            }
-            e => e,
-        })?;
-        let (source, diff, text) = match text {
-            t if t.is_empty() => ("git show HEAD", SHOW_HEAD, git(&repo, SHOW_HEAD)?),
-            t => ("git diff HEAD", DIFF_HEAD, t),
+        let sha = |rev: &str| {
+            resolve(&repo, rev).map_err(|e| match e {
+                // Only on failure: an unborn HEAD in a repo with commits (orphan branch) is still a typo.
+                Error::BadRange { .. } if git(&repo, &["rev-list", "-n1", "--all"]).is_ok_and(|s| s.is_empty()) => {
+                    Error::NoCommits { path: repo.display().to_string() }
+                }
+                e => e,
+            })
         };
-        let names = git(&repo, &[diff, &["--name-only", "-z"]].concat())?;
+        let (base, head) = match spec {
+            Spec::WorkTree { base } => (sha(base)?, Head::WorkTree),
+            Spec::Range { base, head, merge_base } => {
+                let (a, b) = (sha(base)?, sha(head)?);
+                let base = if *merge_base {
+                    // git prints one base when there are several: the one `git diff a...b` uses.
+                    // With both sides resolved, failing means no common ancestor (exit 1, empty stderr).
+                    git(&repo, &["merge-base", &a, &b]).map(|s| s.trim().to_string()).map_err(|e| match e {
+                        Error::Git { .. } => {
+                            Error::BadRange { spec: spec.label(), detail: "no common ancestor".into() }
+                        }
+                        e => e,
+                    })?
+                } else {
+                    a
+                };
+                (base, Head::Sha(b))
+            }
+        };
+        let text = diff(&repo, &base, &head, &[])?;
+        let names = diff(&repo, &base, &head, &["--name-only", "-z"])?;
         let files = names.split('\0').filter(|s| !s.is_empty()).map(String::from).collect();
         let tracked = git(&repo, &["ls-files"])?;
         let git_ms = start.elapsed().as_millis() as u64;
-        Ok(Review { repo, source, diff, text, files, tracked, git_ms })
+        Ok(Review { repo, spec: spec.clone(), base, head, text, files, tracked, git_ms })
     }
 
     /// Diff of one changed file, addressed only by its ID. `None` for an unknown ID.
     pub fn file_diff(&self, id: usize) -> Option<Result<String, Error>> {
         let path = self.files.get(id)?;
-        Some(git(&self.repo, &[self.diff, &["--", path.as_str()]].concat()))
+        Some(diff(&self.repo, &self.base, &self.head, &["--", path.as_str()]))
     }
 
     pub fn to_json(&self) -> Value {
-        json!({ "repo": self.repo, "source": self.source, "text": self.text,
-                "tracked": self.tracked, "gitMs": self.git_ms })
+        let head = match &self.head {
+            Head::Sha(h) => h.as_str(),
+            Head::WorkTree => "worktree",
+        };
+        json!({ "repo": self.repo, "label": self.spec.label(), "base": self.base, "head": head,
+                "text": self.text, "tracked": self.tracked, "gitMs": self.git_ms })
     }
+}
+
+/// `git diff <base> [<head>] <extra>`, from resolved shas only.
+fn diff(repo: &Path, base: &str, head: &Head, extra: &[&str]) -> Result<String, Error> {
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff", base];
+    if let Head::Sha(h) = head {
+        args.push(h);
+    }
+    args.extend(extra);
+    git(repo, &args)
 }
