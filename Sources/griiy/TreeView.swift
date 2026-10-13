@@ -129,7 +129,7 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
             leaf.file = changed[p]
             leaf.path = p
             leaf.parent = n
-            leaves[p] = leaf
+            self.leaves[p] = leaf
             return leaf
         }
         n.children = dirs + leaves
