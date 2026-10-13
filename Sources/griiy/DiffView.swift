@@ -305,8 +305,11 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         var k = 0, n = 0, previous: Double?, gaps: [Double] = [], viewsMax = 0
     }
     private var bench: Bench?
+    private var benchDone: (String) -> Void = { _ in }
 
-    func startBench() {
+    /// Auto-scrolls, then hands `done` the scroll stats as a JSON object.
+    func startBench(done: @escaping (String) -> Void) {
+        benchDone = done
         bench = Bench()
         jump(0)
         table.displayLink(target: self, selector: #selector(step(_:))).add(to: .main, forMode: .common)
@@ -334,8 +337,8 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 bench = nil
                 let g = b.gaps.sorted()
                 let median = g.isEmpty ? 0 : g[g.count / 2]
-                mark(
-                    "\"scroll\":{\"frames\":\(g.count),\"long\":\(g.filter { $0 > 50 }.count),\"max\":\(Int((g.last ?? 0).rounded())),\"median\":\(Int(median.rounded())),\"blank\":0,\"viewsMax\":\(b.viewsMax)}"
+                benchDone(
+                    "{\"frames\":\(g.count),\"long\":\(g.filter { $0 > 50 }.count),\"max\":\(Int((g.last ?? 0).rounded())),\"median\":\(Int(median.rounded())),\"blank\":0,\"viewsMax\":\(b.viewsMax)}"
                 )
                 return
             }

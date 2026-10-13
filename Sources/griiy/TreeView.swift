@@ -137,6 +137,8 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
         n.paths = []
     }
 
+    func liveRowViews() -> Int { outline.subviews.filter { $0 is NSTableRowView && !$0.isHidden }.count }
+
     private func expandHot(_ node: Node) {
         for c in node.children where c.isDir && c.hot {
             outline.expandItem(c)

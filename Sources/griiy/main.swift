@@ -321,7 +321,13 @@ final class App: NSObject, NSApplicationDelegate {
                 "\"git\":\(review?.gitMs ?? 0),\"rows\":\(diff.total),\"files\":\(diff.files.count),\"views\":\(diff.liveRowViews())"
             )
             fillTree()
-            if markPath != nil { diff.startBench() }
+            if markPath != nil {
+                diff.startBench { [tree] scroll in
+                    mark(
+                        "\"scroll\":\(scroll),\"tree\":{\"rows\":\(tree.outline.numberOfRows),\"views\":\(tree.liveRowViews())}"
+                    )
+                }
+            }
         }
         phase = .done
         link.invalidate()
