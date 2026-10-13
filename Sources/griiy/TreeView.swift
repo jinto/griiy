@@ -13,6 +13,8 @@ final class Node {
     var file: Int?
     var path = ""
     var hot = false
+    /// The node it hangs under in the outline (single-child chains are one node).
+    weak var parent: Node?
     let isDir: Bool
 
     init(_ name: String, dir: Bool) {
@@ -52,6 +54,9 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
     let scroll = NSScrollView()
     private var root = Node("", dir: true)
     private var files: [File] = []
+    private var leaves: [String: Node] = [:]
+    /// Every path in the tree, changed files first (diff order), the rest sorted: what ⌘P searches.
+    private(set) var paths: [String] = []
     /// A changed file picked: show it in the diff.
     var onPick: (Int) -> Void = { _ in }
     /// Show this path whole: an unchanged file picked, or any file double-clicked.
@@ -93,7 +98,11 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
             }
             n.paths.append(p)
         }
+        leaves = [:]
         finish(root, changed)
+        // A type change is a delete and an add of one path: list it once.
+        var seen = Set<String>()
+        paths = (files.map(\.path) + all.subtracting(changed.keys).sorted()).filter { seen.insert($0).inserted }
         outline.reloadData()
         expandHot(root)
         return all.count
@@ -109,6 +118,7 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
                 full += "/" + c.name
             }
             c.name = full
+            c.parent = n
             finish(c, changed)
             dirs.append(c)
         }
@@ -116,6 +126,8 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
             let leaf = Node(String(p.split(separator: "/").last ?? ""), dir: false)
             leaf.file = changed[p]
             leaf.path = p
+            leaf.parent = n
+            leaves[p] = leaf
             return leaf
         }
         n.children = dirs + leaves
@@ -164,8 +176,34 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
         return cell
     }
 
+    /// Expands the folders above `path`, selects it and shows it as if clicked (⌘P).
+    func reveal(_ path: String) {
+        guard let leaf = leaves[path] else { return }
+        var above: [Node] = []
+        var n = leaf.parent
+        while let p = n, p !== root {
+            above.append(p)
+            n = p.parent
+        }
+        // Outermost first: a folder inside a closed one has no row yet.
+        for p in above.reversed() { outline.expandItem(p) }
+        let row = outline.row(forItem: leaf)
+        guard row >= 0 else { return }
+        outline.scrollRowToVisible(row)
+        // Selecting the selected row again sends no notification.
+        if row == outline.selectedRow {
+            show(leaf)
+        } else {
+            outline.selectRowIndexes([row], byExtendingSelection: false)
+        }
+    }
+
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        guard let node = outline.item(atRow: outline.selectedRow) as? Node, !node.isDir else { return }
+        if let node = outline.item(atRow: outline.selectedRow) as? Node { show(node) }
+    }
+
+    private func show(_ node: Node) {
+        guard !node.isDir else { return }
         if let f = node.file { onPick(f) } else { onOpen(node.path) }
     }
 

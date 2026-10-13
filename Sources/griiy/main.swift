@@ -51,6 +51,8 @@ final class App: NSObject, NSApplicationDelegate {
     /// Drops a whole-file fetch the user has already moved on from (arrowing through the tree).
     private var opening = 0
     let tree = TreeController()
+    let goTo = GoToFile()
+    let find = FindBar()
     let message = NSTextField(wrappingLabelWithString: "")
     /// Stops the git opening the review when the window closes.
     let cancel = Cancel()
@@ -90,21 +92,37 @@ final class App: NSObject, NSApplicationDelegate {
         full.scroll.frame = right.bounds
         full.scroll.autoresizingMask = [.width, .height]
         full.scroll.isHidden = true
-        for v in [diff.scroll, full.scroll, message] { right.addSubview(v) }
+        find.box.frame.origin = NSPoint(x: right.bounds.width - find.box.frame.width - 24, y: right.bounds.height - 44)
+        find.box.autoresizingMask = [.minXMargin, .minYMargin]
+        for v in [diff.scroll, full.scroll, message, find.box] { right.addSubview(v) }
         split.addArrangedSubview(tree.scroll)
         split.addArrangedSubview(right)
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        for v in [header, line, split] { content.addSubview(v) }
+        goTo.box.frame.origin = NSPoint(
+            x: (b.width - goTo.box.frame.width) / 2, y: b.height - 60 - goTo.box.frame.height)
+        goTo.box.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        for v in [header, line, split, goTo.box] { content.addSubview(v) }
+        goTo.focus = { [unowned self] in shown.table }
+        goTo.onPick = { [unowned self] path in tree.reveal(path) }
+        find.target = { [unowned self] in shown }
         tree.onPick = { [unowned self] f in
             showDiff()
             diff.scrollTo(file: f)
         }
         tree.onOpen = { [unowned self] path in open(path) }
-        // Escape leaves a whole file wherever focus is (the tree keeps it while arrowing through files).
+        // Keys that work wherever focus is, except while typing in a field.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
-            guard e.keyCode == 53, !full.scroll.isHidden else { return e }
-            showDiff()
-            return nil
+            guard !(e.window?.firstResponder is NSText) else { return e }
+            // Escape leaves a whole file (the tree keeps focus while arrowing through files).
+            if e.keyCode == 53, !full.scroll.isHidden {
+                showDiff()
+                return nil
+            }
+            if e.characters == "/", e.modifierFlags.isDisjoint(with: [.command, .control, .option]) {
+                find.open()
+                return nil
+            }
+            return e
         }
         // The first display tick after rows are on screen writes the first-paint mark (tick).
         content.displayLink(target: self, selector: #selector(tick(_:))).add(to: .main, forMode: .common)
@@ -116,6 +134,12 @@ final class App: NSObject, NSApplicationDelegate {
         NSApp.activate()
         window.makeFirstResponder(diff.table)
     }
+
+    /// The diff or the whole file, whichever is on screen.
+    private var shown: DiffController { full.scroll.isHidden ? diff : full }
+
+    @objc func goToFile(_ sender: Any?) { goTo.open(tree.paths) }
+    @objc func findInDiff(_ sender: Any?) { find.open() }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
@@ -268,8 +292,11 @@ let appMenu = NSMenu()
 let editMenu = NSMenu(title: "Edit")
 appMenu.addItem(withTitle: "Quit griiy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+editMenu.addItem(withTitle: "Find…", action: #selector(App.findInDiff(_:)), keyEquivalent: "f")
+let goMenu = NSMenu(title: "Go")
+goMenu.addItem(withTitle: "Go to File…", action: #selector(App.goToFile(_:)), keyEquivalent: "p")
 let menu = NSMenu()
-for sub in [appMenu, editMenu] {
+for sub in [appMenu, editMenu, goMenu] {
     let item = NSMenuItem()
     item.submenu = sub
     menu.addItem(item)

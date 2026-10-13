@@ -72,6 +72,12 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var start: [Int] = []
     private(set) var total = 0
     private var width: CGFloat = 0
+    /// `/` search: the query the hits are for, the hit shown, and the first hit from where the
+    /// screen was when the query changed (where stepping starts).
+    private var query = ""
+    private var hits: [Hit] = []
+    private var hit: Int?
+    private var from = 0
 
     override init() {
         super.init()
@@ -102,6 +108,7 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func load(_ files: [File]) {
         self.files = files
+        (query, hits, hit) = ("", [], nil)
         start = []
         total = 0
         var longest = 0
@@ -213,6 +220,29 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func scrollTo(file f: Int) {
         if f < start.count { scrollTo(row: start[f]) }
+    }
+
+    /// Searches for `q` unless the hits are already for it; returns how many there are.
+    func find(_ q: String) -> Int {
+        guard q != query else { return hits.count }
+        query = q
+        hits = search(files, for: q)
+        let top = table.rows(in: scroll.documentVisibleRect).location
+        from = hits.firstIndex { start[$0.file] + $0.row >= top } ?? hits.count
+        hit = nil
+        return hits.count
+    }
+
+    /// Selects and shows the next (or previous) hit, wrapping; returns its index.
+    func step(forward: Bool) -> Int? {
+        guard !hits.isEmpty else { return nil }
+        let n = hits.count
+        let i = hit.map { ($0 + (forward ? 1 : n - 1)) % n } ?? (forward ? from % n : (from + n - 1) % n)
+        hit = i
+        let r = start[hits[i].file] + hits[i].row
+        table.selectRowIndexes([r], byExtendingSelection: false)
+        table.scrollRowToVisible(r)
+        return i
     }
 
     /// ⌘C: the selected rows' text, without gutters.
