@@ -111,6 +111,55 @@ public struct File: Equatable, Sendable {
         if let a = oldMode, let b = newMode, a != b { return "Mode \(a) → \(b)" }
         return "No content changes"
     }
+
+    /// Selected `lines` of one side's file, and the lines they cover on both sides (F-AI-1).
+    /// Half-open, so an empty range still says where: `k..<k` is between lines k-1 and k. A context
+    /// line maps to its twin; a changed line to its whole change block (the `-`/`+` run between
+    /// context lines). Deleted lines alone map to an empty range.
+    public func span(_ side: Side, _ lines: Range<Int>) -> (base: Range<Int>, head: Range<Int>) {
+        // Hunk headers stop at UInt32 (the parser checks), so nothing below can overflow.
+        let lines = lines.clamped(to: 0..<Int(UInt32.max))
+        let lo = twin(side, lines.lowerBound, forward: true)
+        let theirs = lo..<max(lo, twin(side, lines.upperBound - 1, forward: false) + 1)
+        return side == .base ? (lines, theirs) : (theirs, lines)
+    }
+
+    /// The other side's first line at or after line `n`'s row (`forward`), or last at or before.
+    private func twin(_ side: Side, _ n: Int, forward: Bool) -> Int {
+        let my = side == .base ? \Line.oldNo : \Line.newNo
+        let their = side == .base ? \Line.newNo : \Line.oldNo
+        var delta = 0
+        for h in hunks {
+            let (myStart, myLen, theirStart, theirLen) =
+                side == .base
+                ? (h.oldStart, h.oldLen, h.newStart, h.newLen) : (h.newStart, h.newLen, h.oldStart, h.oldLen)
+            // A start with length 0 is the line before the hunk.
+            if n < myStart + (myLen == 0 ? 1 : 0) { break }
+            if n < myStart + myLen, var i = h.lines.firstIndex(where: { $0[keyPath: my] == n }) {
+                // Out to the edge of the change block, then on to the nearest line the other side has.
+                let step = forward ? -1 : 1
+                while h.lines[i].kind != .context, h.lines.indices.contains(i + step),
+                    h.lines[i + step].kind != .context
+                {
+                    i += step
+                }
+                let t =
+                    forward
+                    ? h.lines[i...].lazy.compactMap { $0[keyPath: their] }.first
+                    : h.lines[...i].lazy.compactMap { $0[keyPath: their] }.last
+                if let t { return t }
+                let before = theirLen == 0 ? theirStart : theirStart - 1
+                return forward ? before + theirLen + 1 : before
+            }
+            delta += theirLen - myLen
+        }
+        // Between hunks, lines are unchanged.
+        return n + delta
+    }
+}
+
+public enum Side: Sendable {
+    case base, head
 }
 
 /// A file while its header is read: names from each source, kept apart until the end.

@@ -43,8 +43,9 @@
   - ✓ 작업 트리 모드에서 스테이징한 변경과 안 한 변경이 모두 보인다
 - [x] **M1-3 diff 파서 (F-DV-10):** 파일/hunk/줄 구조와 메타데이터
   - ✓ 실제 git 출력 fixture: rename, copy, binary, 모드 변경, 삭제, 새 파일, 개행 없음, CRLF, 공백·비ASCII·따옴표 파일명(`core.quotePath`)
-- [ ] **M1-4 줄 매핑 (F-AI-1 기반):** `Selection { path, side, start, end }` ↔ base/head 파일 줄 범위
+- [x] **M1-4 줄 매핑 (F-AI-1 기반):** `Selection { path, side, start, end }` ↔ base/head 파일 줄 범위
   - ✓ hunk 경계, 추가만, 삭제만, 섞인 선택 fixture에서 기대한 base·head 범위가 나온다
+  - 결과 (2026-10-13): `File.span(side, lines)`가 반열린 범위로 양쪽 범위를 돌려준다. 문맥 줄은 짝 줄로, 바뀐 줄은 그 변경 블록(`-`/`+` 묶음) 전체로 매핑하고, 삭제만 고르면 반대쪽은 위치를 가진 빈 범위다. `Selection` 구조체(path 포함)는 쓰는 곳이 생기는 M3에서 만든다. hunk·파일 단위는 호출하는 쪽이 범위로 넘긴다
 - [x] **M1-5 지연 로딩 (§7.3):** 화면에 보이는 행만 만든다
   - ✓ (Swift) 행은 파싱한 구조체에서 `rows(from:n:)`로 창 단위로 만든다. 12만 줄 저장소에서 깊은 창이 전체의 같은 조각과 같다 (테스트). 초기 주입 데이터 기준은 WebView 경계가 사라져 해당 없음
 - [x] **M1-6 가상 스크롤 (F-DV-4)**

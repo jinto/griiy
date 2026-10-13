@@ -281,3 +281,58 @@ func userConfigDoesNotChangeTheResult(key: String, value: String) throws {
     eof.noNewline = true
     #expect(try one(files, "eof.txt").rows(from: 2, n: 1) == [.line(eof)])
 }
+
+// M1-4 (F-AI-1): a selection on one side ↔ line ranges on both.
+@Test func selectionsMapToBothSides() throws {
+    let forty = (1...40).map { "\($0)\n" }.joined()
+    // Base 5 deleted; base 15-16 replaced by three lines; one line added after base 30.
+    let files = try changed("span", [("a.txt", forty), ("gone.txt", "g\nh\n")]) { d in
+        write(
+            d, "a.txt",
+            forty.replacingOccurrences(of: "\n5\n", with: "\n").replacingOccurrences(
+                of: "\n15\n16\n", with: "\nx\ny\nz\n"
+            )
+            .replacingOccurrences(of: "\n30\n", with: "\n30\nnew\n"))
+        write(d, "new.txt", "a\nb\nc\n")
+        try FileManager.default.removeItem(atPath: d + "/gone.txt")
+    }
+    let f = try one(files, "a.txt")
+    #expect(
+        f.hunks.map { "\($0.oldStart),\($0.oldLen),\($0.newStart),\($0.newLen)" } == [
+            "2,7,2,6", "12,8,11,9", "28,6,28,7",
+        ])
+    let cases: [(Side, Range<Int>, Range<Int>, Range<Int>)] = [
+        (.base, 5..<6, 5..<6, 5..<5),  // delete only: an empty range where it was
+        (.head, 31..<32, 31..<31, 31..<32),  // add only
+        (.base, 15..<16, 15..<16, 14..<17),  // half a replacement maps to the whole block
+        (.head, 15..<16, 15..<17, 15..<16),
+        (.head, 14..<17, 15..<17, 14..<17),  // only the added side of a replacement
+        (.base, 14..<17, 14..<17, 13..<17),  // context and changes
+        (.head, 13..<18, 14..<18, 13..<18),
+        (.base, 10..<14, 10..<14, 9..<13),  // from a gap into a hunk
+        (.base, 3..<21, 3..<21, 3..<21),  // across hunks and gaps
+        (.base, 20..<21, 20..<21, 20..<21),  // between hunks the offsets cancel
+        (.head, 40..<42, 39..<41, 40..<42),  // after the last hunk
+        (.base, 1..<2, 1..<2, 1..<2),  // before the first
+    ]
+    for (side, sel, base, head) in cases {
+        let s = f.span(side, sel)
+        #expect(s.base == base && s.head == head, "\(side) \(sel): \(s)")
+    }
+    #expect(try one(files, "new.txt").span(.head, 2..<4) == (1..<1, 2..<4))
+    #expect(try one(files, "gone.txt").span(.base, 1..<3) == (1..<3, 1..<1))
+}
+
+@Test func zeroContextInsertionMapsAroundIt() throws {
+    // `@@ -5,0 …`: the insertion comes after base line 5.
+    let f = try #require(parse("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -5,0 +6,2 @@\n+x\n+y\n").first)
+    #expect(f.span(.base, 5..<7) == (5..<7, 5..<9))
+    #expect(f.span(.head, 6..<8) == (6..<6, 6..<8))
+}
+
+@Test func extremeSelectionsNeverTrap() throws {
+    let f = try #require(parse("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,0 +2,1 @@\n+x\n").first)
+    for side in [Side.base, .head] {
+        for sel in [Int.min..<Int.min, Int.min..<Int.max, (Int.max - 1)..<Int.max, 0..<0] { _ = f.span(side, sel) }
+    }
+}
