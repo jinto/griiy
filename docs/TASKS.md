@@ -20,7 +20,7 @@
   - ✓ 두 라이선스 파일이 저장소 루트에 있다 · README에 PRD §7.4 저장 위치와 §8 외부 요청 목록이 있다
 - [ ] **M0-2 CI:** GitHub Actions macOS 러너에서 `swift format lint`, release 빌드(`-warnings-as-errors`), `swift test`, 크래시 호출 grep, `.app` 번들, 바이너리 크기 출력
   - ✓ PR마다 돌고, 하나라도 실패하면 머지 차단
-  - 진행: Swift workflow 작성 완료, 로컬에서 같은 명령 통과 (2026-10-13). 남은 일: GitHub 저장소를 만든 뒤 `main` 브랜치 보호에서 `check` 필수로 지정 (CONTRIBUTING)
+  - 진행: 저장소 `jinto/griiy`(비공개)에 push, GitHub에서 `check` 통과 (2026-10-13). 첫 실행에서 두 가지를 고쳤다: Binary size 단계의 `binary: %.2f`를 YAML이 키로 읽어 workflow 전체가 거부됐다(block scalar로), 러너의 Swift 6.3.3이 `TreeView`의 클로저 안 `leaves[p]`를 지역 배열로 읽었다(`self.leaves`). 남은 일: `main` 브랜치 보호에서 `check` 필수로 지정 (CONTRIBUTING)
 - [ ] **M0-3 POC: 창 포커스와 키체인 (F-IN-4, F-PR-3)**
   - 배포 형태는 `.app` + CLI 심링크로 정했다 (Swift 전환, `scripts/bundle.sh --install`). 앱은 시작 시 `NSApp.activate()`로 앞에 나온다
   - 남은 확인: ① 심링크로 터미널에서 실행했을 때 창이 앞에 오고 키를 받는가 ② 재빌드·재서명 후 키체인 항목을 다시 묻지 않고 읽는가
