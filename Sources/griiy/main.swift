@@ -20,6 +20,17 @@ enum Palette {
     static let fg = hex(0x1f2328, 0xe6edf3), mut = hex(0x656d76, 0x8d96a0), side = hex(0xf6f8fa, 0x161b22)
     static let add = hex(0xdafbe1, 0x12261e), del = hex(0xffebe9, 0x25171c), hunk = hex(0xddf4ff, 0x121d2f)
     static let addText = hex(0x1a7f37, 0x3fb950), delText = hex(0xcf222e, 0xf85149), bg = hex(0xffffff, 0x0d1117)
+    static let keyword = hex(0xcf222e, 0xff7b72), string = hex(0x0a3069, 0xa5d6ff)
+    static let comment = hex(0x6e7781, 0x8b949e), number = hex(0x0550ae, 0x79c0ff)
+
+    static func syntax(_ t: Token) -> NSColor {
+        switch t {
+        case .keyword: keyword
+        case .string: string
+        case .comment: comment
+        case .number: number
+        }
+    }
 }
 
 // ---- Bench marks: with GRIIY_MARK set, two JSON lines go to that file (scripts/bench.sh) ----

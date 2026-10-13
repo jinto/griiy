@@ -78,6 +78,9 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var hits: [Hit] = []
     private var hit: Int?
     private var from = 0
+    /// Each file's language, and the lexer state its rows start in, made when it's first drawn.
+    private var langs: [Lang?] = []
+    private var lexed: [Int: [LexState]] = [:]
     /// Whether file `f` is marked seen (F-DV-9): a ✓ in its header.
     var isSeen: (Int) -> Bool = { _ in false }
 
@@ -110,6 +113,8 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func load(_ files: [File]) {
         self.files = files
+        langs = files.map { Lang.of(path: $0.path) }
+        lexed = [:]
         (query, hits, hit) = ("", [], nil)
         start = []
         total = 0
@@ -157,7 +162,7 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let view = tableView.makeView(withIdentifier: id, owner: nil) as? RowView ?? RowView()
         view.identifier = id
         let (f, row) = row(r)
-        configure(view, file: f, row ?? .note(""))
+        configure(view, file: f, at: r - start[f], row ?? .note(""))
         return view
     }
 
@@ -166,10 +171,11 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard f < start.count, let v = table.rowView(atRow: start[f], makeIfNecessary: false) as? RowView else {
             return
         }
-        configure(v, file: f, .fileHeader)
+        configure(v, file: f, at: 0, .fileHeader)
     }
 
-    private func configure(_ v: RowView, file i: Int, _ row: Row) {
+    /// `at` is the row's index in its file, as `File.rows(from:n:)` counts.
+    private func configure(_ v: RowView, file i: Int, at: Int, _ row: Row) {
         let f = files[i]
         let plain: [NSAttributedString.Key: Any] = [
             .font: mono, .foregroundColor: Palette.fg, .paragraphStyle: paragraph,
@@ -214,12 +220,27 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             }
             s.append(NSAttributedString(string: gutter(l.oldNo) + gutter(l.newNo) + " ", attributes: muted))
             let text = l.text.utf8.count > maxChars ? String(l.text.prefix(maxChars)) : l.text
-            s.append(NSAttributedString(string: text.replacingOccurrences(of: "\r", with: ""), attributes: plain))
+            let shown = text.replacingOccurrences(of: "\r", with: "")
+            let base = s.length
+            s.append(NSAttributedString(string: shown, attributes: plain))
+            if let lang = langs[i] {
+                for (r, token) in lex(shown, lang, from: lexState(file: i, at: at, lang)).spans {
+                    s.addAttribute(
+                        .foregroundColor, value: Palette.syntax(token),
+                        range: NSRange(location: base + r.lowerBound, length: r.count))
+                }
+            }
             if l.noNewline { s.append(NSAttributedString(string: "  \\ no newline at end of file", attributes: muted)) }
             v.plain = l.text
         }
         v.text = s
         v.needsDisplay = true
+    }
+
+    private func lexState(file f: Int, at: Int, _ lang: Lang) -> LexState {
+        if lexed[f] == nil { lexed[f] = lexStates(files[f], lang) }
+        let states = lexed[f] ?? []
+        return at < states.count ? states[at] : .code
     }
 
     func liveRowViews() -> Int { table.subviews.filter { $0 is RowView && !$0.isHidden }.count }
