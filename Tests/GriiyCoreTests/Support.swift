@@ -1,4 +1,4 @@
-// Throwaway git repositories for tests (ported from the Rust tests/common/mod.rs, commit a97e3b8).
+// Throwaway git repositories for tests (ported from the Rust tests/common/mod.rs, commit c8e787c).
 import Foundation
 import GriiyCore
 

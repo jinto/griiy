@@ -1,6 +1,6 @@
 # 계획: Rust → Swift 전환
 
-> 결정 (2026-10-13, 사용자): UI는 AppKit, 코어도 Swift로 간다. Rust는 쓰지 않는다. 기준 명세는 커밋 `a97e3b8`의 Rust 코드와 테스트 59개다. Swift 버전이 같은 테스트를 통과하면 Rust 파일을 지운다.
+> 결정 (2026-10-13, 사용자): UI는 AppKit, 코어도 Swift로 간다. Rust는 쓰지 않는다. 기준 명세는 커밋 `c8e787c`의 Rust 코드와 테스트 59개다. Swift 버전이 같은 테스트를 통과하면 Rust 파일을 지운다.
 > 배경: docs/SPIKE-native-ui.md (스파이크 B가 가장 깔끔했다). UI 출발점: `spike/b-appkit-swift/Sources/*.swift` (FFI를 빼고 코어를 직접 부르게 바꾼다).
 
 ## 목표와 범위
@@ -129,7 +129,7 @@ scripts/bundle.sh        .app 번들 + CLI 심링크 (M0-3/M4-2 기반)
 8. 정리와 문서
 
 ## 결과 (2026-10-13)
-- 코어·UI를 모두 Swift로 옮겼다. Rust 파일은 지웠다(커밋 `a97e3b8`에 있다). 테스트 52개(Rust에서 옮긴 것 + 정수 트랩, 다중 git 취소, 행 창 경계, CRLF·리터럴 문자열 설정), swift-format lint, `-warnings-as-errors` release 빌드가 통과한다
+- 코어·UI를 모두 Swift로 옮겼다. Rust 파일은 지웠다(커밋 `c8e787c`에 있다). 테스트 52개(Rust에서 옮긴 것 + 정수 트랩, 다중 git 취소, 행 창 경계, CRLF·리터럴 문자열 설정), swift-format lint, `-warnings-as-errors` release 빌드가 통과한다
 - `scripts/smoke-quit.sh`: git이 리뷰를 여는 중에 앱을 끝내면 git과 그 자식이 남지 않는다(통과)
 - `.app` 568KB, 실행 파일 571KB
 

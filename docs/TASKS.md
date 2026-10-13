@@ -13,7 +13,7 @@
 
 # v0.1
 
-> **2026-10-13 Swift 전환:** 스택을 Rust + wry에서 Swift + AppKit으로 바꿨다 (docs/PLAN-swift.md). 끝난 작업은 Swift로 옮겨 같은 테스트를 통과했다. WebView 경계에만 필요했던 M0-4, M0-5는 해당 없음으로 바꿨다. Rust 버전은 커밋 `a97e3b8`에 있다.
+> **2026-10-13 Swift 전환:** 스택을 Rust + wry에서 Swift + AppKit으로 바꿨다 (docs/PLAN-swift.md). 끝난 작업은 Swift로 옮겨 같은 테스트를 통과했다. WebView 경계에만 필요했던 M0-4, M0-5는 해당 없음으로 바꿨다. Rust 버전은 커밋 `c8e787c`에 있다.
 
 ## M0 기반
 - [x] **M0-1 오픈소스 기본 파일:** LICENSE-MIT, LICENSE-APACHE, README(설치, 사용법, 데이터 저장 위치, 외부 전송 범위), CONTRIBUTING
