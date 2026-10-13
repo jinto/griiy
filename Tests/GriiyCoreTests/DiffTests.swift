@@ -336,3 +336,52 @@ func userConfigDoesNotChangeTheResult(key: String, value: String) throws {
         for sel in [Int.min..<Int.min, Int.min..<Int.max, (Int.max - 1)..<Int.max, 0..<0] { _ = f.span(side, sel) }
     }
 }
+
+// M1-12: `n`/`p` stop where a change block starts.
+@Test func changeBlocksStartAfterContextOrHeader() throws {
+    let files = parse(
+        """
+        diff --git a/a b/a
+        --- a/a
+        +++ b/a
+        @@ -1,6 +1,6 @@
+        -one
+        +ONE
+         two
+         three
+        -four
+         five
+        +five and a half
+        @@ -20,2 +20,3 @@
+         twenty
+        +twenty-one
+         twenty-two
+        diff --git a/b b/b
+        Binary files a/b and b/b differ
+
+        """)
+    try #require(files.count == 2)
+    let f = files[0]
+    // Row 0 file header, 1 hunk header, 2 -one, 3 +ONE, 4 two, 5 three, 6 -four, 7 five,
+    // 8 +five…, 9 hunk header, 10 twenty, 11 +twenty-one.
+    #expect(f.changes == [2, 6, 8, 11])
+    for r in f.changes {
+        let rows = f.rows(from: r - 1, n: 2)
+        guard case .line(let l) = rows[1] else {
+            Issue.record("row \(r) is \(rows[1])")
+            continue
+        }
+        #expect(l.kind != .context)
+        if case .line(let before) = rows[0] { #expect(before.kind == .context) }
+    }
+    #expect(files[1].changes.isEmpty)
+    // The whole-file view keeps the blocks, now between unchanged lines.
+    let w = whole(
+        f, path: "a",
+        text: Array(
+            (["ONE", "two", "three", "five", "five and a half"]
+                + (6...19).map(String.init) + ["twenty", "twenty-one", "twenty-two"]).joined(separator: "\n").utf8 + [
+                    10
+                ]))
+    #expect(w.changes.count == 4)
+}

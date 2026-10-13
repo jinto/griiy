@@ -74,7 +74,7 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
         outline.dataSource = self
         outline.delegate = self
         outline.target = self
-        outline.doubleAction = #selector(open)
+        outline.doubleAction = #selector(doubleClicked)
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
@@ -207,7 +207,14 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
         if let f = node.file { onPick(f) } else { onOpen(node.path) }
     }
 
-    @objc private func open() {
-        if let node = outline.item(atRow: outline.clickedRow) as? Node, !node.isDir { onOpen(node.path) }
+    @objc private func doubleClicked() { open(outline.clickedRow) }
+
+    /// Return: the selected file whole; false on a folder.
+    func openSelected() -> Bool { open(outline.selectedRow) }
+
+    @discardableResult private func open(_ row: Int) -> Bool {
+        guard let node = outline.item(atRow: row) as? Node, !node.isDir else { return false }
+        onOpen(node.path)
+        return true
     }
 }

@@ -107,6 +107,22 @@ public struct File: Equatable, Sendable {
         return rows
     }
 
+    /// Rows (of `rows(from:n:)`) where a change block starts: an added or deleted line right after
+    /// a hunk header or a context line. `n`/`p` stop here, in the diff and the whole file alike.
+    public var changes: [Int] {
+        var out: [Int] = []
+        var at = 1
+        for h in hunks {
+            var before = Kind.context
+            for (i, l) in h.lines.enumerated() {
+                if l.kind != .context && before == .context { out.append(at + 1 + i) }
+                before = l.kind
+            }
+            at += 1 + h.lines.count
+        }
+        return out
+    }
+
     /// Why a file with no hunks is in the diff.
     var note: String {
         if binary { return "Binary file" }

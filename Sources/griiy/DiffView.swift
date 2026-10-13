@@ -222,6 +222,23 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if f < start.count { scrollTo(row: start[f]) }
     }
 
+    /// First row of the file at `path`, if it's in this diff.
+    func startOf(_ path: String) -> Int? { files.firstIndex { $0.path == path }.map { start[$0] } }
+
+    /// `] [` and `n p`: selects the next (or previous) file start or change block after the cursor
+    /// and puts it at the top, a change with the 4 rows above it (the diff's hunk header). The
+    /// cursor is `from`, else the last selected row on screen, else the top row. Stops at the ends.
+    func jump(files byFile: Bool, forward: Bool, from: Int? = nil) {
+        guard !files.isEmpty else { return }
+        let visible = table.rows(in: scroll.documentVisibleRect)
+        let cursor =
+            from ?? table.selectedRowIndexes.last { NSLocationInRange($0, visible) } ?? visible.location
+        let stops = byFile ? start : files.indices.flatMap { f in files[f].changes.map { start[f] + $0 } }
+        guard let r = forward ? stops.first(where: { $0 > cursor }) : stops.last(where: { $0 < cursor }) else { return }
+        table.selectRowIndexes([r], byExtendingSelection: false)
+        scrollTo(row: byFile ? r : r - 4)
+    }
+
     /// Searches for `q` unless the hits are already for it; returns how many there are.
     func find(_ q: String) -> Int {
         guard q != query else { return hits.count }

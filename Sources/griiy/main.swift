@@ -2,6 +2,7 @@
 // review opens on a thread of its own while the window comes up, and closing the window kills
 // any git still running.
 import AppKit
+import Carbon
 import Foundation
 import GriiyCore
 
@@ -39,6 +40,40 @@ func mark(_ body: String) {
 private func jsonString(_ s: String) -> String {
     String(decoding: (try? JSONEncoder().encode(s)) ?? Data("\"\"".utf8), as: UTF8.self)
 }
+
+/// The key's character on the current ASCII-capable layout, as AppKit matches ⌘ shortcuts: `n`
+/// stays `n` with a Korean input source on, and German ⇧7 is still `/`. ⇧ and ⌥ count; nil with ⌘ or ⌃.
+func asciiKey(_ e: NSEvent) -> String? {
+    guard e.modifierFlags.isDisjoint(with: [.command, .control]),
+        let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
+        let data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+    else { return nil }
+    let layout = Unmanaged<CFData>.fromOpaque(data).takeUnretainedValue()
+    guard let bytes = CFDataGetBytePtr(layout) else { return nil }
+    // UCKeyTranslate wants Carbon modifiers >> 8: shift 2, option 8, which NSEvent keeps at bits 17 and 19.
+    let mods = UInt32(e.modifierFlags.intersection([.shift, .option]).rawValue >> 16 & 0xFF)
+    var dead: UInt32 = 0
+    var chars = [UniChar](repeating: 0, count: 4)
+    var n = 0
+    let status = bytes.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) {
+        UCKeyTranslate(
+            $0, e.keyCode, UInt16(kUCKeyActionDown), mods, UInt32(LMGetKbdType()),
+            OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, chars.count, &n, &chars)
+    }
+    return status == noErr && n > 0 ? String(utf16CodeUnits: chars, count: n) : nil
+}
+
+let shortcuts = """
+    ]  [     next / previous file
+    n  p     next / previous change
+    /  ⌘F    find: Return next, ⇧Return previous
+    ⌘P       go to file
+    Return   tree: show the file whole
+    Escape   back to the diff
+    ⌘/       this list
+
+    ] [ n p stop at the ends; find wraps around.
+    """
 
 final class App: NSObject, NSApplicationDelegate {
     let window = NSWindow(
@@ -110,19 +145,31 @@ final class App: NSObject, NSApplicationDelegate {
             diff.scrollTo(file: f)
         }
         tree.onOpen = { [unowned self] path in open(path) }
-        // Keys that work wherever focus is, except while typing in a field.
+        // Keys that work wherever focus is, except while typing in a field or over a sheet.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
-            guard !(e.window?.firstResponder is NSText) else { return e }
+            guard e.window === window, window.attachedSheet == nil, !(window.firstResponder is NSText) else { return e }
             // Escape leaves a whole file (the tree keeps focus while arrowing through files).
             if e.keyCode == 53, !full.scroll.isHidden {
                 showDiff()
                 return nil
             }
-            if e.characters == "/", e.modifierFlags.isDisjoint(with: [.command, .control, .option]) {
-                find.open()
+            // Return (or keypad Enter) on a tree row shows it whole, like a double-click.
+            if e.keyCode == 36 || e.keyCode == 76, window.firstResponder === tree.outline, tree.openSelected() {
                 return nil
             }
-            return e
+            let key = asciiKey(e)
+            switch key {
+            case "/": find.open()
+            case "n": shown.jump(files: false, forward: true)
+            case "p": shown.jump(files: false, forward: false)
+            case "]", "[":
+                // A whole file is one file: step from where it sits in the diff.
+                let from = full.scroll.isHidden ? nil : full.files.first.flatMap { diff.startOf($0.path) }
+                showDiff()
+                diff.jump(files: true, forward: key == "]", from: from)
+            default: return e
+            }
+            return nil
         }
         // The first display tick after rows are on screen writes the first-paint mark (tick).
         content.displayLink(target: self, selector: #selector(tick(_:))).add(to: .main, forMode: .common)
@@ -140,6 +187,15 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func goToFile(_ sender: Any?) { goTo.open(tree.paths) }
     @objc func findInDiff(_ sender: Any?) { find.open() }
+    @objc func showShortcuts(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "Keyboard Shortcuts"
+        let list = NSTextField(labelWithString: shortcuts)
+        list.font = mono
+        list.sizeToFit()
+        alert.accessoryView = list
+        alert.beginSheetModal(for: window)
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
@@ -295,8 +351,10 @@ editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquiv
 editMenu.addItem(withTitle: "Find…", action: #selector(App.findInDiff(_:)), keyEquivalent: "f")
 let goMenu = NSMenu(title: "Go")
 goMenu.addItem(withTitle: "Go to File…", action: #selector(App.goToFile(_:)), keyEquivalent: "p")
+let helpMenu = NSMenu(title: "Help")
+helpMenu.addItem(withTitle: "Keyboard Shortcuts", action: #selector(App.showShortcuts(_:)), keyEquivalent: "/")
 let menu = NSMenu()
-for sub in [appMenu, editMenu, goMenu] {
+for sub in [appMenu, editMenu, goMenu, helpMenu] {
     let item = NSMenuItem()
     item.submenu = sub
     menu.addItem(item)

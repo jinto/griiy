@@ -120,6 +120,11 @@ private func text(_ files: [File], _ h: Hit) -> String? {
     #expect(hits == [Hit(file: 299, row: 401)])
     print("search 120k lines: \(Int(ms))ms")
     #expect(search(files, for: "COMPUTE").isEmpty && search(files, for: "compute").count == 120_000)
+    // `n`/`p` gather every file's change blocks on each press (M1-12).
+    let t2 = Date()
+    let stops = files.reduce(0) { $0 + $1.changes.count }
+    print("changes 120k lines: \(Int(Date().timeIntervalSince(t2) * 1000))ms")
+    #expect(stops == 0)  // all context lines: the whole scan, nothing found
 }
 
 @Test func searchEdgeCases() {
