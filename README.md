@@ -10,7 +10,7 @@ PR comments and issues.
 
 ## Install
 
-Requires macOS 15+ and git 2.29+. Opening GitHub pull requests also needs the GitHub CLI (`gh auth login`). Build from source with Xcode 26 (Swift 6.2+):
+Requires macOS 15+ and git 2.29+. Opening GitHub pull requests also needs the GitHub CLI (`gh auth login`). Asking questions needs Claude Code 2.1.218+ (`claude`) or an Anthropic API key. Build from source with Xcode 26 (Swift 6.2+):
 
 ```sh
 scripts/bundle.sh --install   # builds griiy.app and links /usr/local/bin/griiy to it

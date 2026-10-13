@@ -77,6 +77,8 @@ public final class Cancel: Sendable {
         var cancelled = false
         /// Every git running for this request: Review.open runs ls-files and diff at once.
         var groups: Set<pid_t> = []
+        /// What else stops with the request (an HTTP request).
+        var hooks: [@Sendable () -> Void] = []
     }
     private let state = Mutex(State())
 
@@ -85,11 +87,22 @@ public final class Cancel: Sendable {
     public var isCancelled: Bool { state.withLock { $0.cancelled } }
 
     public func cancel() {
-        let groups = state.withLock { s in
+        let (groups, hooks) = state.withLock { s in
             s.cancelled = true
-            return s.groups
+            defer { s.hooks = [] }
+            return (s.groups, s.hooks)
         }
         for group in groups { kill(-group, SIGKILL) }
+        for hook in hooks { hook() }
+    }
+
+    /// Runs `hook` when the request is cancelled, or now if it already is.
+    func onCancel(_ hook: @escaping @Sendable () -> Void) {
+        let cancelled = state.withLock { s in
+            if !s.cancelled { s.hooks.append(hook) }
+            return s.cancelled
+        }
+        if cancelled { hook() }
     }
 
     /// Records a running group, or kills it at once if the request is already cancelled.
@@ -123,23 +136,32 @@ public func run(_ program: String, repo: FilePath, _ args: [String], cancel: Can
 /// posix_spawn rather than Process: the child gets its own process group, so cancelling can kill
 /// the whole tree, and only stdin/stdout/stderr are inherited. `repo` nil: no `-C` (gh). A missing
 /// program is `.gitMissing`; callers running something else say so.
-func spawn(_ program: String, repo: FilePath?, _ args: [String], cancel: Cancel?) throws(GitError) -> (
-    Int32, [UInt8], [UInt8]
-) {
-    var out: [Int32] = [0, 0]
-    var err: [Int32] = [0, 0]
+///
+/// `stdin` nil reads /dev/null. `cwd` must exist. `onStdout` gets stdout as it comes, on the
+/// calling thread, and the returned stdout is then empty.
+func spawn(
+    _ program: String, repo: FilePath?, _ args: [String], cancel: Cancel?, stdin: [UInt8]? = nil,
+    cwd: FilePath? = nil, onStdout: ((ArraySlice<UInt8>) -> Void)? = nil
+) throws(GitError) -> (Int32, [UInt8], [UInt8]) {
+    var out: [Int32] = [-1, -1]
+    var err: [Int32] = [-1, -1]
+    var inp: [Int32] = [-1, -1]
     guard pipe(&out) == 0 else { throw .git(detail: "pipe: \(String(cString: strerror(errno)))") }
-    guard pipe(&err) == 0 else {
-        close(out[0])
-        close(out[1])
+    guard pipe(&err) == 0, stdin == nil || pipe(&inp) == 0 else {
+        for fd in out + err + inp where fd >= 0 { close(fd) }
         throw .git(detail: "pipe: \(String(cString: strerror(errno)))")
     }
     var actions: posix_spawn_file_actions_t?
     posix_spawn_file_actions_init(&actions)
     defer { posix_spawn_file_actions_destroy(&actions) }
-    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+    if stdin == nil {
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+    } else {
+        posix_spawn_file_actions_adddup2(&actions, inp[0], 0)
+    }
     posix_spawn_file_actions_adddup2(&actions, out[1], 1)
     posix_spawn_file_actions_adddup2(&actions, err[1], 2)
+    if let cwd { _ = cwd.withPlatformString { posix_spawn_file_actions_addchdir_np(&actions, $0) } }
     var attr: posix_spawnattr_t?
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
@@ -173,6 +195,8 @@ func spawn(_ program: String, repo: FilePath?, _ args: [String], cancel: Cancel?
     env["GH_FORCE_TTY"] = nil
     env["GH_PROMPT_DISABLED"] = "1"
     env["NO_COLOR"] = "1"
+    // claude: no memory folder under ~/.claude/projects for the folder it runs in.
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     var envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0)=\($1)") } + [nil]
     defer { for p in argv + envp { free(p) } }
 
@@ -180,18 +204,23 @@ func spawn(_ program: String, repo: FilePath?, _ args: [String], cancel: Cancel?
     let rc = posix_spawnp(&pid, program, &actions, &attr, &argv, &envp)
     close(out[1])
     close(err[1])
+    if inp[0] >= 0 { close(inp[0]) }
     guard rc == 0 else {
-        close(out[0])
-        close(err[0])
+        for fd in [out[0], err[0], inp[1]] where fd >= 0 { close(fd) }
         throw rc == ENOENT ? .gitMissing : .git(detail: "\(program): \(String(cString: strerror(rc)))")
     }
     cancel?.start(pid)
-    // Drain both pipes at once so a chatty child can't block on a full pipe.
+    // Feed stdin and drain both pipes at once so a chatty child can't block on a full pipe.
+    let inFd = inp[1]
+    let fed = stdin.map { bytes in Background { () throws(GitError) in writeAll(inFd, bytes) } }
     let errFd = err[0]
     let stderrBytes = Background { () throws(GitError) in readAll(errFd) }
-    let stdoutBytes = readAll(out[0])
+    let stdoutBytes = readAll(out[0], onStdout)
     var status: Int32 = 0
     while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+    // ponytail: a grandchild holding stdin or stdout keeps us here until it exits, as with git;
+    // cancelling kills the group. Close the pipes after waitpid if that ever matters.
+    try? fed?.wait()
     let errBytes = (try? stderrBytes.wait()) ?? []
     cancel?.finish(pid)
     if cancel?.isCancelled == true { throw .cancelled }
@@ -199,16 +228,31 @@ func spawn(_ program: String, repo: FilePath?, _ args: [String], cancel: Cancel?
     return (exit, stdoutBytes, errBytes)
 }
 
-private func readAll(_ fd: Int32) -> [UInt8] {
+private func readAll(_ fd: Int32, _ each: ((ArraySlice<UInt8>) -> Void)? = nil) -> [UInt8] {
     defer { close(fd) }
     var bytes: [UInt8] = []
     var buf = [UInt8](repeating: 0, count: 1 << 16)
     while true {
         let n = buf.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
         if n > 0 {
-            bytes += buf[..<n]
+            if let each { each(buf[..<n]) } else { bytes += buf[..<n] }
         } else if n == 0 || errno != EINTR {
             return bytes
+        }
+    }
+}
+
+/// Writes until done or the child stops reading (EPIPE, without SIGPIPE), then closes `fd`.
+private func writeAll(_ fd: Int32, _ bytes: [UInt8]) {
+    defer { close(fd) }
+    _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+    var at = 0
+    while at < bytes.count {
+        let n = bytes[at...].withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        if n > 0 {
+            at += n
+        } else if n < 0 && errno != EINTR {
+            return
         }
     }
 }
