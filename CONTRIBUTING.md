@@ -21,7 +21,7 @@ Scripts:
 - `scripts/bench.sh <rounds> <name=binary>... -- <repo[:range]>...` measures launch-to-first-paint,
   physical footprint and scroll frame times against real repositories.
 - `scripts/smoke-quit.sh` checks that quitting while git runs leaves no git behind.
-- `scripts/winid.swift <pid>` prints a process's window ids, for `screencapture -l <id>` (capture
+- `scripts/winid.swift <pid>` prints the id of a process's main window, for `screencapture -l <id>` (capture
   the griiy window, never the whole screen).
 
 ## Layout
