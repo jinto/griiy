@@ -52,16 +52,22 @@ private func fnv(_ bytes: [UInt8]) -> UInt64 {
 
 private func hex(_ n: UInt64) -> String { String(n, radix: 16).leftPadded(16) }
 
-/// Resolves symlinks and relative paths first, so one repo always hashes the same. realpath(3),
-/// like Rust's canonicalize: URL.resolvingSymlinksInPath would drop /private and change the hash.
+/// Resolves symlinks and relative paths first, so one repo always hashes the same.
 private func repoHash(_ repo: FilePath) -> String {
-    let bytes = repo.withPlatformString { p -> [UInt8] in
-        let resolved = realpath(p, nil)
-        defer { free(resolved) }
-        let c = resolved.map { UnsafePointer($0) } ?? p
-        return Array(UnsafeBufferPointer(start: c, count: strlen(c))).map { UInt8(bitPattern: $0) }
+    let bytes = (canonical(repo) ?? repo).withPlatformString {
+        Array(UnsafeBufferPointer(start: $0, count: strlen($0))).map { UInt8(bitPattern: $0) }
     }
     return hex(fnv(bytes))
+}
+
+/// realpath(3), like Rust's canonicalize: URL.resolvingSymlinksInPath would drop /private. nil if
+/// the path doesn't exist.
+func canonical(_ p: FilePath) -> FilePath? {
+    p.withPlatformString { c in
+        guard let r = realpath(c, nil) else { return nil }
+        defer { free(r) }
+        return FilePath(platformString: r)
+    }
 }
 
 extension String {

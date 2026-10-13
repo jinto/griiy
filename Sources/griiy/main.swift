@@ -46,6 +46,10 @@ final class App: NSObject, NSApplicationDelegate {
         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
     let header = NSTextField(labelWithString: "…")
     let diff = DiffController()
+    /// One file whole (F-DV-5), in place of the diff until Escape or a changed file is picked.
+    let full = DiffController()
+    /// Drops a whole-file fetch the user has already moved on from (arrowing through the tree).
+    private var opening = 0
     let tree = TreeController()
     let message = NSTextField(wrappingLabelWithString: "")
     /// Stops the git opening the review when the window closes.
@@ -83,13 +87,25 @@ final class App: NSObject, NSApplicationDelegate {
         message.autoresizingMask = [.width, .height]
         message.isHidden = true
         message.isSelectable = true
-        right.addSubview(diff.scroll)
-        right.addSubview(message)
+        full.scroll.frame = right.bounds
+        full.scroll.autoresizingMask = [.width, .height]
+        full.scroll.isHidden = true
+        for v in [diff.scroll, full.scroll, message] { right.addSubview(v) }
         split.addArrangedSubview(tree.scroll)
         split.addArrangedSubview(right)
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         for v in [header, line, split] { content.addSubview(v) }
-        tree.onPick = { [unowned self] f in diff.scrollTo(file: f) }
+        tree.onPick = { [unowned self] f in
+            showDiff()
+            diff.scrollTo(file: f)
+        }
+        tree.onOpen = { [unowned self] path in open(path) }
+        // Escape leaves a whole file wherever focus is (the tree keeps it while arrowing through files).
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
+            guard e.keyCode == 53, !full.scroll.isHidden else { return e }
+            showDiff()
+            return nil
+        }
         // The first display tick after rows are on screen writes the first-paint mark (tick).
         content.displayLink(target: self, selector: #selector(tick(_:))).add(to: .main, forMode: .common)
     }
@@ -161,8 +177,40 @@ final class App: NSObject, NSApplicationDelegate {
                     string: hint, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: Palette.fg]))
         }
         message.attributedStringValue = s
-        message.isHidden = false
-        diff.scroll.isHidden = true
+        show(message)
+    }
+
+    private func show(_ view: NSView) {
+        for v in [diff.scroll, full.scroll, message] { v.isHidden = v !== view }
+    }
+
+    private func showDiff() {
+        opening += 1
+        // An error or "No changes" stays what's shown behind a whole file.
+        show(review?.files.isEmpty == false ? diff.scroll : message)
+    }
+
+    /// Fetches the file on a thread (git or the disk), then shows it if nothing was picked since.
+    private func open(_ path: String) {
+        guard let review else { return }
+        opening += 1
+        let mine = opening
+        let cancel = cancel
+        Thread.detachNewThread {
+            let result = Result { () throws(GitError) in try review.whole(path, cancel: cancel) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard mine == self.opening else { return }
+                    switch result {
+                    case .success(let f):
+                        self.full.load([f])
+                        self.show(self.full.scroll)
+                        self.full.scrollTo(row: 0)
+                    case .failure(let e): self.showMessage(e.title, e.detail, e.hint)
+                    }
+                }
+            }
+        }
     }
 
     @objc private func tick(_ link: CADisplayLink) {

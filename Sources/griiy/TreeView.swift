@@ -11,6 +11,7 @@ final class Node {
     var children: [Node] = []
     /// Index of the changed file this leaf is.
     var file: Int?
+    var path = ""
     var hot = false
     let isDir: Bool
 
@@ -51,7 +52,10 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
     let scroll = NSScrollView()
     private var root = Node("", dir: true)
     private var files: [File] = []
+    /// A changed file picked: show it in the diff.
     var onPick: (Int) -> Void = { _ in }
+    /// Show this path whole: an unchanged file picked, or any file double-clicked.
+    var onOpen: (String) -> Void = { _ in }
 
     override init() {
         super.init()
@@ -64,6 +68,8 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
         outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         outline.dataSource = self
         outline.delegate = self
+        outline.target = self
+        outline.doubleAction = #selector(open)
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
@@ -72,9 +78,9 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
     /// Builds and shows the tree; returns the number of paths in it.
     func fill(_ files: [File], tracked: String) -> Int {
         self.files = files
-        // Deleted files aren't in ls-files but still belong in the tree.
+        // Deleted files aren't in the listing but still belong in the tree.
         let changed = Dictionary(files.enumerated().map { ($1.path, $0) }, uniquingKeysWith: { a, _ in a })
-        var all = Set(tracked.split(separator: "\n").map(String.init))
+        var all = Set(tracked.split(separator: "\0").map(String.init))
         all.formUnion(changed.keys)
         root = Node("", dir: true)
         for p in all {
@@ -109,6 +115,7 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
         let leaves = n.paths.sorted().map { p -> Node in
             let leaf = Node(String(p.split(separator: "/").last ?? ""), dir: false)
             leaf.file = changed[p]
+            leaf.path = p
             return leaf
         }
         n.children = dirs + leaves
@@ -158,6 +165,11 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        if let node = outline.item(atRow: outline.selectedRow) as? Node, let f = node.file { onPick(f) }
+        guard let node = outline.item(atRow: outline.selectedRow) as? Node, !node.isDir else { return }
+        if let f = node.file { onPick(f) } else { onOpen(node.path) }
+    }
+
+    @objc private func open() {
+        if let node = outline.item(atRow: outline.clickedRow) as? Node, !node.isDir { onOpen(node.path) }
     }
 }

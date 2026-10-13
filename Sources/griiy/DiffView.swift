@@ -163,7 +163,7 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         switch row {
         case .fileHeader:
             v.background = Palette.side
-            let letter = f.status.rawValue.prefix(1).uppercased()  // A D M R C
+            let letter = f.status == .unchanged ? " " : f.status.rawValue.prefix(1).uppercased()  // A D M R C
             let color = f.status == .added ? Palette.addText : f.status == .deleted ? Palette.delText : Palette.mut
             s.append(
                 NSAttributedString(string: letter + " ", attributes: plain.merging([.foregroundColor: color]) { $1 }))
@@ -175,7 +175,7 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             st.append(
                 NSAttributedString(
                     string: " -\(del)", attributes: plain.merging([.foregroundColor: Palette.delText]) { $1 }))
-            v.stats = st
+            if f.status != .unchanged { v.stats = st }
             v.plain = (f.oldPath.map { $0 + " → " } ?? "") + f.path
         case .hunk(let h):
             v.background = Palette.hunk

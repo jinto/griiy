@@ -10,6 +10,8 @@ import Foundation
 
 public enum Status: String, Equatable, Sendable {
     case added, deleted, modified, renamed, copied
+    /// Only in a whole-file view of a file the diff doesn't touch.
+    case unchanged
 }
 
 public enum Kind: Equatable, Sendable {
@@ -162,6 +164,46 @@ public enum Side: Sendable {
     case base, head
 }
 
+/// The whole head file `text` with `f`'s changes in place (F-DV-5), as a File whose one hunk spans
+/// both sides: the view, copying and `span` work on it as on any diff. `f` nil: an unchanged file.
+/// If `text` no longer matches the diff (the work tree moved on), lines run out early; no trap.
+public func whole(_ f: File?, path: String, text bytes: [UInt8]) -> File {
+    var out = f ?? File(path: path, status: .unchanged)
+    // git's test for binary: a NUL in the first 8000 bytes.
+    if bytes.prefix(8000).contains(0) {
+        out.binary = true
+        out.hunks = []
+        return out
+    }
+    var lines = bytes.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+    let noNewline = lines.last?.isEmpty == false
+    if !noNewline { lines.removeLast() }
+    var rows: [Line] = []
+    var (o, n) = (1, 1)
+    func gap(upTo end: Int) {
+        while n < end, n >= 1, n <= lines.count {
+            rows.append(Line(kind: .context, oldNo: o, newNo: n, text: text(lines[n - 1])))
+            (o, n) = (o &+ 1, n &+ 1)
+        }
+    }
+    // A start with length 0 is the line before the hunk. Wrapping: a hand-made File may hold any Int.
+    let first = { (start: Int, len: Int) in len == 0 ? start &+ 1 : start }
+    for h in out.hunks {
+        gap(upTo: first(h.newStart, h.newLen))
+        rows += h.lines
+        (o, n) = (first(h.oldStart, h.oldLen) &+ h.oldLen, first(h.newStart, h.newLen) &+ h.newLen)
+    }
+    gap(upTo: Int.max)
+    if noNewline, let last = rows.last, last.kind == .context, last.newNo == lines.count {
+        rows[rows.count - 1].noNewline = true
+    }
+    let (ol, nl) = (rows.count { $0.oldNo != nil }, rows.count { $0.newNo != nil })
+    var hunk = Hunk(oldStart: ol == 0 ? 0 : 1, oldLen: ol, newStart: nl == 0 ? 0 : 1, newLen: nl, section: "")
+    hunk.lines = rows
+    out.hunks = rows.isEmpty ? [] : [hunk]
+    return out
+}
+
 /// A file while its header is read: names from each source, kept apart until the end.
 private struct Draft {
     var gitNames: (String, String)?
@@ -192,7 +234,7 @@ private struct Draft {
         case .renamed, .copied:
             guard let new else { return nil }
             (path, oldPath) = (new, old)
-        case .added, .modified:
+        case .added, .modified, .unchanged:
             guard let p = new ?? old else { return nil }
             (path, oldPath) = (p, nil)
         }

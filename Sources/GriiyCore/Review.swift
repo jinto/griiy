@@ -17,7 +17,7 @@ public struct Review: Sendable {
     public var head: Head
     /// The parsed diff. A file's index here is its ID.
     public var files: [File]
-    /// `git ls-files` output, one path per line, for the tree.
+    /// Every file in head, NUL-separated, for the tree: the commit's tree, or the index for the work tree.
     public var tracked: String
     public var gitMs: Int
 
@@ -60,13 +60,42 @@ public struct Review: Sendable {
             }
             head = .sha(z)
         }
-        // ls-files (for the tree) runs alongside the diff instead of after it.
-        let tracked = Background { () throws(GitError) in try git(repo, ["ls-files"], cancel: cancel) }
+        // The tree's listing runs alongside the diff instead of after it. -z: names unquoted.
+        let list =
+            if case .sha(let h) = head { ["ls-tree", "-r", "-z", "--name-only", h] } else { ["ls-files", "-z"] }
+        let tracked = Background { () throws(GitError) in try git(repo, list, cancel: cancel) }
         let files = parseDiff(try run("git", repo: repo, diffArgs(base, head), cancel: cancel))
         let ls = try tracked.wait()
         return Review(
             repo: repo, spec: spec, base: base, head: head, files: files, tracked: ls,
             gitMs: Int(Date().timeIntervalSince(start) * 1000))
+    }
+
+    /// The whole head version of `path` with its changes marked (F-DV-5). Blocking. Added, deleted
+    /// and binary files come straight from the diff, which already holds all there is to show.
+    public func whole(_ path: String, cancel: Cancel? = nil) throws(GitError) -> File {
+        let f = files.first { $0.path == path }
+        if let f, f.binary || f.status == .added || f.status == .deleted { return f }
+        let bytes: [UInt8]
+        switch head {
+        case .sha(let h):
+            bytes = try run("git", repo: repo, ["cat-file", "blob", "\(h):\(path)"], cancel: cancel)
+        case .workTree:
+            // Through a directory swapped for a symlink, the file could be anywhere: it must still be in the repo.
+            guard let dir = canonical(repo.appending(path).removingLastComponent()), let root = canonical(repo),
+                dir.starts(with: root)
+            else { throw .git(detail: "\(path) is outside the repository") }
+            let full = repo.appending(path).string
+            // A symlink shows its target, as git stores it, and is never followed.
+            if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: full) {
+                bytes = Array(target.utf8)
+            } else if let data = FileManager.default.contents(atPath: full) {
+                bytes = Array(data)
+            } else {
+                throw .git(detail: "can't read \(path)")
+            }
+        }
+        return GriiyCore.whole(f, path: path, text: bytes)
     }
 }
 

@@ -120,7 +120,7 @@ private func expectBadRange(_ spec: String, _ body: () throws -> Review) {
     // header + hunk header + one line
     #expect(f.path == "feat.txt" && f.status == .added && st(f) == [1, 0] && f.rowCount == 3 && f.oldPath == nil)
     #expect(review.files[1].path == "main.txt" && review.files[1].status == .deleted)
-    #expect(review.tracked.split(separator: "\n") == ["base.txt", "feat.txt"])
+    #expect(review.tracked.split(separator: "\0") == ["base.txt", "feat.txt"])
 }
 
 @Test func a120kLineDiffOpensWithRowsInWindows() throws {
