@@ -5,6 +5,7 @@ import System
 
 public enum GitError: Error, Equatable, Sendable {
     case gitMissing
+    case ghMissing
     case notARepo(path: String)
     case noCommits(path: String)
     case badRange(spec: String, detail: String)
@@ -18,6 +19,7 @@ public enum GitError: Error, Equatable, Sendable {
     public var title: String {
         switch self {
         case .gitMissing: "git is not installed"
+        case .ghMissing: "The GitHub CLI (gh) is not installed"
         case .notARepo(let path): "\(path) is not a git repository"
         case .noCommits(let path): "\(path) has no commits yet"
         case .badRange(let spec, _): "Unknown revision or range: \(spec)"
@@ -34,11 +36,14 @@ public enum GitError: Error, Equatable, Sendable {
         switch self {
         case .gitMissing:
             "Install git (xcode-select --install or brew install git) and make sure it is on PATH."
+        case .ghMissing:
+            "griiy asks GitHub about pull requests through gh: brew install gh, then gh auth login. Installed already? Launch griiy from a terminal so it finds gh on PATH."
         case .notARepo: "Run griiy inside a git repository, or pass its path: griiy -C path/to/repo."
         case .noCommits: "Make a first commit, then run griiy again."
         case .badRange:
             "Check the branch or commit names. Ranges look like main..feature or main...feature. To open another repository: griiy -C path/to/repo."
-        case .fetchFailed: "Check your network and that the remote exists, then run griiy again."
+        case .fetchFailed:
+            "Check your network and that the remote exists. For a private repository, log in (gh auth login) and let git use it (gh auth setup-git)."
         case .noRemote(let want?, _, _):
             "Add it as a remote (git remote add upstream https://github.com/\(want.label).git), or clone it: gh repo clone \(want.label)."
         case .noRemote(nil, let n, _):
@@ -111,8 +116,9 @@ public func run(_ program: String, repo: FilePath, _ args: [String], cancel: Can
 }
 
 /// posix_spawn rather than Process: the child gets its own process group, so cancelling can kill
-/// the whole tree, and only stdin/stdout/stderr are inherited.
-private func spawn(_ program: String, repo: FilePath, _ args: [String], cancel: Cancel?) throws(GitError) -> (
+/// the whole tree, and only stdin/stdout/stderr are inherited. `repo` nil: no `-C` (gh). A missing
+/// program is `.gitMissing`; callers running something else say so.
+func spawn(_ program: String, repo: FilePath?, _ args: [String], cancel: Cancel?) throws(GitError) -> (
     Int32, [UInt8], [UInt8]
 ) {
     var out: [Int32] = [0, 0]
@@ -132,11 +138,23 @@ private func spawn(_ program: String, repo: FilePath, _ args: [String], cancel: 
     var attr: posix_spawnattr_t?
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+    posix_spawnattr_setflags(
+        &attr,
+        Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
     posix_spawnattr_setpgroup(&attr, 0)
+    // Signals as a shell would give them. The calling thread's mask (SIGTERM blocked) carried
+    // into git, and a failed fetch waited forever for the upload-pack it had told to stop (tested).
+    // Ignored signals (SIGPIPE) would carry over the same way.
+    var none = sigset_t()
+    var all = sigset_t()
+    sigemptyset(&none)
+    sigfillset(&all)
+    posix_spawnattr_setsigmask(&attr, &none)
+    posix_spawnattr_setsigdefault(&attr, &all)
 
     // argv: program -C <repo bytes> args…; env: ours, with the settings that keep git's output parseable.
-    var argv: [UnsafeMutablePointer<CChar>?] = [strdup(program), strdup("-C"), repo.withPlatformString { strdup($0) }]
+    var argv: [UnsafeMutablePointer<CChar>?] = [strdup(program)]
+    if let repo { argv += [strdup("-C"), repo.withPlatformString { strdup($0) }] }
     argv += args.map { strdup($0) } + [nil]
     var env = ProcessInfo.processInfo.environment
     env["LC_ALL"] = "C"
@@ -145,6 +163,11 @@ private func spawn(_ program: String, repo: FilePath, _ args: [String], cancel: 
     env["GIT_LITERAL_PATHSPECS"] = "1"
     // Overrides -U on the command line; the diff parser needs git's own format.
     env["GIT_DIFF_OPTS"] = nil
+    // gh: plain output on the pipe, never a pager or a prompt.
+    env["GH_PAGER"] = ""
+    env["GH_FORCE_TTY"] = nil
+    env["GH_PROMPT_DISABLED"] = "1"
+    env["NO_COLOR"] = "1"
     var envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0)=\($1)") } + [nil]
     defer { for p in argv + envp { free(p) } }
 
@@ -196,15 +219,6 @@ public func resolve(_ repo: FilePath, _ rev: String, cancel: Cancel? = nil) thro
             .trimmingCharacters(in: .whitespacesAndNewlines)
     } catch .git(let detail) {
         throw .badRange(spec: rev, detail: detail)
-    }
-}
-
-/// `git fetch <remote> <refspec>` (M2-2 builds PR fetches on this).
-public func fetch(_ repo: FilePath, remote: String, refspec: String) throws(GitError) {
-    do {
-        _ = try git(repo, ["fetch", "--no-tags", "--quiet", "--end-of-options", remote, refspec])
-    } catch .git(let detail) {
-        throw .fetchFailed(remote: remote, detail: detail)
     }
 }
 

@@ -40,17 +40,6 @@ private func explained(_ e: GitError) -> Bool { !e.title.isEmpty && !e.hint.isEm
     }
 }
 
-@Test func fetchFailed() {
-    let r = repo("fetch", [("a.txt", "a\n")])
-    do {
-        try fetch(FilePath(r.path), remote: "/nonexistent/griiy-remote", refspec: "main")
-        Issue.record("fetched")
-    } catch {
-        guard case .fetchFailed = error else { return #expect(Bool(false), "\(error)") }
-        #expect(explained(error))
-    }
-}
-
 @Test func permissionDenied() throws {
     let t = TempDir("perm")
     let locked = t.path + "/locked"
@@ -83,7 +72,7 @@ private func explained(_ e: GitError) -> Bool { !e.title.isEmpty && !e.hint.isEm
     for e: GitError in [
         .gitMissing, .notARepo(path: ""), .noCommits(path: ""), .badRange(spec: "", detail: ""),
         .fetchFailed(remote: "", detail: ""), .permissionDenied(path: "", detail: ""), .git(detail: ""), .cancelled,
-        .noRemote(want: nil, number: 1, detail: ""),
+        .noRemote(want: nil, number: 1, detail: ""), .ghMissing,
         .noRemote(want: GitHubRepo(owner: "o", name: "r"), number: 1, detail: ""),
     ] {
         #expect(explained(e), "\(e)")

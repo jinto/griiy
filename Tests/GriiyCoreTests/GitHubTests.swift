@@ -120,19 +120,162 @@ private func pick(_ out: String, _ want: GitHubRepo?, _ n: Int = 7) throws(GitEr
 @Test func openPicksTheRemote() throws {
     let r = repo("pr", [("a.txt", "a\n")])
     git(r.path, ["remote", "add", "origin", "gh:me/r"])
-    git(r.path, ["remote", "add", "upstream", "gh:O/R"])
     git(r.path, ["config", "url.git@github.com:.insteadOf", "gh:"])
-    let dir = FilePath(r.path)
-    // Fetching comes in M2-2: for now opening a PR stops at the remote it would fetch from.
-    for spec in [Spec.pullRequest(repo: gh("o", "r"), number: 5), .pullRequest(repo: nil, number: 5)] {
-        #expect(throws: GitError.fetchFailed(remote: "upstream", detail: "fetching pull requests comes in M2-2")) {
-            try Review.open(dir, spec)
+    // No remote has x/y: stops before asking GitHub anything.
+    #expect(throws: GitError.noRemote(want: gh("x", "y"), number: 5, detail: "origin → github.com/me/r")) {
+        try Review.open(FilePath(r.path), .pullRequest(repo: gh("x", "y"), number: 5))
+    }
+}
+
+@Test func refNamesAreValid() {
+    let cases = [
+        ("o", "r", "refs/griiy/gh/o/r/7"), ("o", ".github", "refs/griiy/gh/o/%2Egithub/7"),
+        ("o", "a..b", "refs/griiy/gh/o/a%2E%2Eb/7"), ("o", "x.lock", "refs/griiy/gh/o/x%2Elock/7"),
+        ("-o", "r_2", "refs/griiy/gh/-o/r_2/7"),
+    ]
+    for (owner, name, ns) in cases {
+        #expect(prRefs(gh(owner, name), 7) == ns)
+        for leaf in ["head", "base"] { git("/", ["check-ref-format", "\(ns)/\(leaf)"]) }
+    }
+}
+
+@Test func baseShaIsOneFullObjectID() {
+    let sha1 = String(repeating: "0123456789", count: 4)
+    let sha256 = String(repeating: "abcdef01", count: 8)
+    #expect(baseSha(sha1 + "\n") == sha1)
+    #expect(baseSha(sha256 + "\n") == sha256)
+    #expect(baseSha(sha1) == sha1)
+    for out in [
+        "", "\n", "null\n", sha256.uppercased() + "\n", " " + sha1, sha1 + " \n", sha1 + "\n\n", "\(sha1)\n\(sha1)\n",
+        String(sha1.dropLast()), sha1 + "0", ":refs/heads/x", "{\"message\":\"Not Found\",\"status\":\"404\"}",
+        sha1.dropLast() + "g",
+    ] {
+        #expect(baseSha(out) == nil, "\(out)")
+    }
+}
+
+/// Every ref outside refs/griiy, and the files a fetch could write besides objects.
+private func outsideGriiy(_ dir: String) -> String {
+    let refs = git(dir, ["for-each-ref", "--format=%(refname) %(objectname)"]).split(separator: "\n")
+        .filter { !$0.hasPrefix("refs/griiy/") }.joined(separator: "\n")
+    let files = ["FETCH_HEAD", "objects/info/commit-graph", "objects/info/commit-graphs", "shallow"].filter {
+        FileManager.default.fileExists(atPath: "\(dir)/.git/\($0)")
+    }
+    return refs + "\n" + files.joined(separator: " ")
+}
+
+/// A "GitHub" remote (a local repo) with PR 1, and a clone of it set up the way people set theirs up.
+private func prRepos() -> (remote: TempDir, local: TempDir, base: String) {
+    let remote = repo("prremote", [("a.txt", "a\n")])
+    let base = git(remote.path, ["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    git(remote.path, ["checkout", "-qb", "feature"])
+    write(remote.path, "a.txt", "b\n")
+    git(remote.path, ["commit", "-qam", "pr"])
+    git(remote.path, ["update-ref", "refs/pull/1/head", "feature"])
+    // main moves on after the PR branched: the diff base is the merge-base, not main's tip.
+    git(remote.path, ["checkout", "-q", "main"])
+    write(remote.path, "z.txt", "z\n")
+    git(remote.path, ["add", "z.txt"])
+    git(remote.path, ["commit", "-qm", "later"])
+    git(remote.path, ["update-ref", "-d", "refs/heads/feature"])
+    let local = TempDir("prlocal")
+    git(local.path, ["clone", "-q", remote.path, "."])
+    // A tag the PR's commit picks up after the clone: a plain fetch would bring it along.
+    git(remote.path, ["tag", "v-pr", "refs/pull/1/head"])
+    // Settings that make a plain fetch write more than refs/griiy.
+    git(local.path, ["config", "--add", "remote.origin.fetch", "+refs/pull/*/head:refs/remotes/origin/pr/*"])
+    git(local.path, ["config", "fetch.writeCommitGraph", "true"])
+    git(local.path, ["config", "fetch.prune", "true"])
+    git(local.path, ["update-ref", "refs/remotes/origin/stale", "HEAD"])
+    return (remote, local, base)
+}
+
+@Test func fetchWritesOnlyGriiyRefs() throws {
+    let (remote, local, base) = prRepos()
+    let dir = FilePath(local.path)
+    let tip = git(remote.path, ["rev-parse", "main"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let before = outsideGriiy(local.path)
+    let pr = gh("O", "R")
+    let shas = try fetchPullRequest(dir, remote: "origin", pr, 1, base: tip)
+    #expect(outsideGriiy(local.path) == before)
+    #expect(shas.base == tip)
+    #expect(
+        shas.head
+            == git(remote.path, ["rev-parse", "refs/pull/1/head"]).trimmingCharacters(in: .whitespacesAndNewlines))
+    #expect(git(local.path, ["rev-parse", "refs/griiy/gh/o/r/1/head"]).hasPrefix(shas.head))
+    #expect(try mergeBase(dir, shas.base, shas.head, label: "o/r#1") == base)
+
+    // Force-push: the PR now points at an unrelated commit, and fetching again follows it.
+    git(remote.path, ["checkout", "-q", "--orphan", "other"])
+    git(remote.path, ["commit", "-qm", "rewritten"])
+    git(remote.path, ["update-ref", "refs/pull/1/head", "other"])
+    let again = try fetchPullRequest(dir, remote: "origin", pr, 1, base: tip)
+    #expect(again.head == git(remote.path, ["rev-parse", "other"]).trimmingCharacters(in: .whitespacesAndNewlines))
+    #expect(outsideGriiy(local.path) == before)
+    // The base can move backwards too (a base branch reset, or a closed PR's older base).
+    #expect(try fetchPullRequest(dir, remote: "origin", pr, 1, base: base).base == base)
+    // No common ancestor now.
+    #expect(throws: GitError.badRange(spec: "o/r#1", detail: "no common ancestor")) {
+        try mergeBase(dir, again.base, again.head, label: "o/r#1")
+    }
+}
+
+@Test func openingAPullRequest() throws {
+    let (remote, local, base) = prRepos()
+    defer { withExtendedLifetime(remote) {} }
+    let dir = FilePath(local.path)
+    let tip = git(local.path, ["rev-parse", "main"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    // What open does after gh answers, for a URL and for `#n` alike: both arrive with the repo.
+    let (spec, b, head) = try Review.pullRequest(dir, remote: "origin", gh("O", "R"), 1, base: tip, cancel: nil)
+    #expect(spec == .pullRequest(repo: gh("o", "r"), number: 1))
+    #expect(spec.label == "o/r#1")
+    #expect(b == base)
+    #expect(
+        head
+            == .sha(
+                git(local.path, ["rev-parse", "refs/griiy/gh/o/r/1/head"]).trimmingCharacters(
+                    in: .whitespacesAndNewlines)))
+    let review = Review(repo: dir, spec: spec, base: b, head: head, files: [], tracked: "", gitMs: 0)
+    #expect(review.key == reviewKey(.gitHub(owner: "o", repo: "r", number: 1)))
+}
+
+@Test func fetchFailures() throws {
+    let (remote, local, _) = prRepos()
+    defer { withExtendedLifetime(remote) {} }
+    let dir = FilePath(local.path)
+    let tip = git(local.path, ["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    for (remote, n, base) in [
+        ("origin", 2, tip), ("origin", 1, String(repeating: "1", count: 40)), ("nowhere", 1, tip),
+        // An ssh failure is about the remote, never the user's checkout.
+        ("ssh://git@127.0.0.1:1/o/r.git", 1, tip),
+        // Error text quotes the URL: a token in it stays off the screen.
+        ("https://me:secret@127.0.0.1:1/o/r.git", 1, tip),
+    ] {
+        do {
+            _ = try fetchPullRequest(dir, remote: remote, gh("o", "r"), n, base: base)
+            Issue.record("fetched \(remote) #\(n)")
+        } catch {
+            guard case .fetchFailed(remote, let detail) = error else {
+                Issue.record("\(remote) #\(n): \(error)")
+                continue
+            }
+            #expect(!detail.isEmpty && !detail.contains("secret"), "\(detail)")
         }
     }
-    #expect(
-        throws: GitError.noRemote(
-            want: gh("x", "y"), number: 5, detail: "origin → github.com/me/r\nupstream → github.com/o/r")
-    ) {
-        try Review.open(dir, .pullRequest(repo: gh("x", "y"), number: 5))
+}
+
+@Test func shallowCloneSaysSo() throws {
+    let (remote, _, _) = prRepos()
+    let shallow = TempDir("prshallow")
+    git(shallow.path, ["clone", "-q", "--depth=1", "file://\(remote.path)", "."])
+    let dir = FilePath(shallow.path)
+    let tip = git(shallow.path, ["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let shas = try fetchPullRequest(dir, remote: "origin", gh("o", "r"), 1, base: tip)
+    do {
+        _ = try mergeBase(dir, shas.base, shas.head, label: "o/r#1")
+        Issue.record("found a merge-base in a depth-1 clone")
+    } catch {
+        guard case .badRange(_, let detail) = error else { return #expect(Bool(false), "\(error)") }
+        #expect(detail.contains("--unshallow"))
     }
 }

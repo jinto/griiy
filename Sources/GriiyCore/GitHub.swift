@@ -1,9 +1,10 @@
 // GitHub PRs (F-PR-1): owner/repo from a PR URL or the remotes, and the remote to fetch from.
 import Foundation
+import System
 
 /// A github.com repository, lowercased: GitHub names ignore case, and so do the store key and
 /// macOS ref files. Only GitHub's own name characters get in, so no `/`, `%`, space or NUL. Names
-/// like `.github` still aren't valid ref components: M2-2 encodes them for `refs/griiy/gh/…`.
+/// like `.github` still aren't valid ref components: `prRefs` encodes them.
 public struct GitHubRepo: Equatable, Sendable {
     public let owner: String
     public let name: String
@@ -100,4 +101,78 @@ func prRemote(_ remotes: String, _ want: GitHubRepo?, number: Int) throws(GitErr
             detail: all.map { "\($0.remote) → github.com/\($0.repo.label)" }.joined(separator: "\n"))
     }
     return pick
+}
+
+/// Where PR `number`'s `head` and `base` are fetched to (F-PR-1). Bytes outside `[a-z0-9_-]` become
+/// `%XX`, so names that aren't valid ref components (`.github`, `a..b`, `x.lock`) still make refs.
+func prRefs(_ pr: GitHubRepo, _ number: Int) -> String {
+    func ref(_ s: String) -> String {
+        s.utf8.map { b in
+            (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(b) || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(b)
+                || b == UInt8(ascii: "_") || b == UInt8(ascii: "-")
+                ? String(UnicodeScalar(b)) : String(format: "%%%02X", b)
+        }.joined()
+    }
+    return "refs/griiy/gh/\(ref(pr.owner))/\(ref(pr.name))/\(number)"
+}
+
+/// The PR's base commit as GitHub has it: the base branch tip while open, kept as it was once
+/// closed or merged (closed PRs have no `refs/pull/<n>/merge` to find it from). Blocking.
+func pullBase(_ pr: GitHubRepo, _ number: Int, cancel: Cancel?) throws(GitError) -> String {
+    // --hostname: GH_HOST could point gh at another server.
+    let args = ["api", "--hostname", "github.com", "repos/\(pr.label)/pulls/\(number)", "--jq", ".base.sha"]
+    let (status, out, err): (Int32, [UInt8], [UInt8])
+    do {
+        (status, out, err) = try spawn("gh", repo: nil, args, cancel: cancel)
+    } catch .gitMissing {
+        throw .ghMissing
+    }
+    let answer = String(decoding: out, as: UTF8.self)
+    guard status == 0, let sha = baseSha(answer) else {
+        let why = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        throw .fetchFailed(remote: "GitHub", detail: why.isEmpty ? "unexpected answer: \(answer.prefix(200))" : why)
+    }
+    return sha
+}
+
+/// gh's answer for `.base.sha`: one full lowercase object id (SHA-1 or SHA-256) and a newline,
+/// nothing else. It goes into a refspec, and a 404 prints a JSON body here.
+func baseSha(_ out: String) -> String? {
+    let sha = out.hasSuffix("\n") ? out.dropLast() : out[...]
+    guard [40, 64].contains(sha.utf8.count),
+        sha.utf8.allSatisfy({
+            (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains($0)
+        })
+    else { return nil }
+    return String(sha)
+}
+
+/// Fetches PR `number` and commit `base` into `prRefs` and returns both shas. Blocking. The options
+/// keep the fetch to refs/griiy (F-PR-6) whatever the user's config says: no remote-tracking
+/// refs from `remote.*.fetch` (--refmap=), no FETCH_HEAD, tags, submodules, maintenance or
+/// commit-graph. `+`: a force-pushed PR fetches again.
+// ponytail: two windows opening the same PR while it is force-pushed can read each other's refs;
+// both are real PR commits. Fetch into per-run refs if that ever matters.
+func fetchPullRequest(
+    _ repo: FilePath, remote: String, _ pr: GitHubRepo, _ number: Int, base: String, cancel: Cancel? = nil
+)
+    throws(GitError) -> (base: String, head: String)
+{
+    let ns = prRefs(pr, number)
+    let args = [
+        "-c", "fetch.writeCommitGraph=false", "fetch", "--no-tags", "--quiet", "--refmap=", "--no-write-fetch-head",
+        "--no-recurse-submodules", "--no-auto-maintenance", "--end-of-options", remote,
+        "+refs/pull/\(number)/head:\(ns)/head", "+\(base):\(ns)/base",
+    ]
+    // Not `run`: its stderr reading would call ssh's "Permission denied" the checkout's fault.
+    let (status, _, err) = try spawn("git", repo: repo, args, cancel: cancel)
+    guard status == 0 else {
+        let why = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        // git leaves tokens in remote URLs out of its messages (tested). --quiet can leave it empty.
+        throw .fetchFailed(remote: remote, detail: why.isEmpty ? "git fetch exited with \(status)" : why)
+    }
+    let shas = try git(repo, ["rev-parse", "\(ns)/base^{commit}", "\(ns)/head^{commit}"], cancel: cancel)
+        .split(separator: "\n").map(String.init)
+    guard shas.count == 2 else { throw .git(detail: "can't read \(ns)") }
+    return (shas[0], shas[1])
 }

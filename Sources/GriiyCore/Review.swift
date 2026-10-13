@@ -39,6 +39,7 @@ public struct Review: Sendable {
                 throw .badRange(spec: spec, detail: detail)
             }
         }
+        var spec = spec
         let base: String
         let head: Head
         switch spec {
@@ -46,22 +47,12 @@ public struct Review: Sendable {
             (base, head) = (try sha(b), .workTree)
         case .range(let b, let h, let mergeBase):
             let (a, z) = (try sha(b), try sha(h))
-            if mergeBase {
-                // git prints one base when there are several: the one `git diff a...b` uses. With
-                // both sides resolved, failing means no common ancestor (exit 1, empty stderr).
-                do {
-                    base = try git(repo, ["merge-base", a, z], cancel: cancel).trimmingCharacters(
-                        in: .whitespacesAndNewlines)
-                } catch .git {
-                    throw .badRange(spec: spec.label, detail: "no common ancestor")
-                }
-            } else {
-                base = a
-            }
+            base = mergeBase ? try GriiyCore.mergeBase(repo, a, z, label: spec.label, cancel: cancel) : a
             head = .sha(z)
         case .pullRequest(let want, let number):
-            let (remote, _) = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), want, number: number)
-            throw .fetchFailed(remote: remote, detail: "fetching pull requests comes in M2-2")
+            let (remote, pr) = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), want, number: number)
+            (spec, base, head) = try pullRequest(
+                repo, remote: remote, pr, number, base: pullBase(pr, number, cancel: cancel), cancel: cancel)
         }
         // The tree's listing runs alongside the diff instead of after it. -z: names unquoted.
         let list =
@@ -72,6 +63,16 @@ public struct Review: Sendable {
         return Review(
             repo: repo, spec: spec, base: base, head: head, files: files, tracked: ls,
             gitMs: Int(Date().timeIntervalSince(start) * 1000))
+    }
+
+    /// PR `number` fetched, as a resolved spec and a three-dot diff like GitHub's "Files changed".
+    /// The spec names the repo even for `#n`, so the key and label are the PR URL's.
+    static func pullRequest(
+        _ repo: FilePath, remote: String, _ pr: GitHubRepo, _ number: Int, base: String, cancel: Cancel?
+    ) throws(GitError) -> (Spec, String, Head) {
+        let spec = Spec.pullRequest(repo: pr, number: number)
+        let shas = try fetchPullRequest(repo, remote: remote, pr, number, base: base, cancel: cancel)
+        return (spec, try mergeBase(repo, shas.base, shas.head, label: spec.label, cancel: cancel), .sha(shas.head))
     }
 
     /// The whole head version of `path` with its changes marked (F-DV-5). Blocking. Added, deleted
@@ -99,6 +100,23 @@ public struct Review: Sendable {
             }
         }
         return GriiyCore.whole(f, path: path, text: bytes)
+    }
+}
+
+/// merge-base(a, z), the one `git diff a...z` uses when there are several. With both sides
+/// resolved, failing means no common ancestor (exit 1, empty stderr), or history cut off by a
+/// shallow clone.
+func mergeBase(_ repo: FilePath, _ a: String, _ z: String, label: String, cancel: Cancel? = nil) throws(GitError)
+    -> String
+{
+    do {
+        return try git(repo, ["merge-base", a, z], cancel: cancel).trimmingCharacters(in: .whitespacesAndNewlines)
+    } catch .git {
+        if (try? git(repo, ["rev-parse", "--is-shallow-repository"], cancel: cancel))?.hasPrefix("true") == true {
+            throw .badRange(
+                spec: label, detail: "no common ancestor in this shallow clone. Fetch the rest: git fetch --unshallow")
+        }
+        throw .badRange(spec: label, detail: "no common ancestor")
     }
 }
 
@@ -133,7 +151,7 @@ extension Review {
         switch spec {
         case .workTree: reviewKey(.workTree(repo: repo))
         case .range(let base, let head, _): reviewKey(.range(repo: repo, base: base, head: head))
-        // open resolves `#n` to its repo (M2-2), so `repo` is never nil here.
+        // open resolves `#n` to its repo, so `repo` is never nil here.
         case .pullRequest(let r, let n): reviewKey(.gitHub(owner: r?.owner ?? "", repo: r?.name ?? "", number: n))
         }
     }

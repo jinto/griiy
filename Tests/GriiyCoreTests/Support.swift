@@ -11,6 +11,7 @@ final class TempDir {
     private static let lock = NSLock()
 
     init(_ name: String) {
+        _ = isolatedGit
         let n = TempDir.lock.withLock {
             TempDir.counter += 1
             return TempDir.counter
@@ -25,6 +26,13 @@ final class TempDir {
 
     deinit { try? FileManager.default.removeItem(at: url) }
 }
+
+/// The code under test spawns git with this process's environment: keep the developer's config
+/// out. Once, before any test spawns: setenv while another thread reads environ isn't safe.
+private let isolatedGit: Void = {
+    setenv("GIT_CONFIG_GLOBAL", "/dev/null", 1)
+    setenv("GIT_CONFIG_NOSYSTEM", "1", 1)
+}()
 
 func realpathString(_ path: String) -> String {
     guard let p = realpath(path, nil) else { return path }
