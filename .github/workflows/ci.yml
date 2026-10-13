@@ -15,6 +15,8 @@ jobs:
       - run: swift test
       - name: No crash calls in app code
         run: "! grep -rnE 'fatalError|precondition\\(|unsafelyUnwrapped' Sources/"
+      - name: No HTML parsing of PR text (F-PR-5)
+        run: "! grep -rnE 'NSAttributedString\\(html:|documentType|loadHTMLString' Sources/"
       - run: scripts/bundle.sh
       - name: Binary size
         run: ls -l .build/release/griiy | awk '{ printf "binary: %.2f MB\n", $5 / 1048576 }' | tee -a "$GITHUB_STEP_SUMMARY"

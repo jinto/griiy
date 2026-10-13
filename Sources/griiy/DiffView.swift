@@ -83,6 +83,16 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var lexed: [Int: [LexState]] = [:]
     /// Whether file `f` is marked seen (F-DV-9): a ✓ in its header.
     var isSeen: (Int) -> Bool = { _ in false }
+    /// The PR's line comments (F-PR-4), and each file's by row, placed when the file is first drawn.
+    var threads: [ReviewThread] = [] {
+        didSet {
+            placed = [:]
+            table.reloadData()
+        }
+    }
+    private var placed: [Int: [Int: [ReviewThread]]] = [:]
+    private let popover = NSPopover()
+    private let pane = TextPane()
 
     override init() {
         super.init()
@@ -100,6 +110,12 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.controller = self
         table.dataSource = self
         table.delegate = self
+        table.target = self
+        table.action = #selector(clicked)
+        pane.scroll.frame = NSRect(x: 0, y: 0, width: 440, height: 320)
+        popover.contentViewController = NSViewController()
+        popover.contentViewController?.view = pane.scroll
+        popover.behavior = .transient
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
@@ -115,6 +131,7 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         self.files = files
         langs = files.map { Lang.of(path: $0.path) }
         lexed = [:]
+        placed = [:]
         (query, hits, hit) = ("", [], nil)
         start = []
         total = 0
@@ -218,7 +235,15 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 let s = n.map(String.init) ?? ""
                 return String(repeating: " ", count: max(0, 6 - s.count)) + s
             }
-            s.append(NSAttributedString(string: gutter(l.oldNo) + gutter(l.newNo) + " ", attributes: muted))
+            // A line with comments: its numbers stand out and 💬 sits at the right edge; click or `c` opens them.
+            let talk = !threadsAt(file: i, row: at).isEmpty
+            s.append(
+                NSAttributedString(
+                    string: gutter(l.oldNo) + gutter(l.newNo) + " ",
+                    attributes: talk
+                        ? plain.merging([.font: monoBold, .foregroundColor: Palette.number]) { $1 } : muted)
+            )
+            if talk { v.stats = NSAttributedString(string: "💬", attributes: plain) }
             let text = l.text.utf8.count > maxChars ? String(l.text.prefix(maxChars)) : l.text
             let shown = text.replacingOccurrences(of: "\r", with: "")
             let base = s.length
@@ -242,6 +267,42 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let states = lexed[f] ?? []
         return at < states.count ? states[at] : .code
     }
+
+    /// The threads on row `at` of file `f`.
+    private func threadsAt(file f: Int, row at: Int) -> [ReviewThread] {
+        guard !threads.isEmpty else { return [] }
+        if placed[f] == nil { placed[f] = threadRows(threads, in: files[f]) }
+        return placed[f]?[at] ?? []
+    }
+
+    /// Global row `r`'s threads in a popover beside it, if it has any.
+    func showThreads(row r: Int) {
+        guard r >= 0, r < total else { return }
+        let f = fileAt(r)
+        let ts = threadsAt(file: f, row: r - start[f])
+        guard !ts.isEmpty else { return }
+        var images: [URL] = []
+        let s = NSMutableAttributedString()
+        for t in ts { s.append(threadText(t, images: &images)) }
+        pane.show(s, images: images)
+        table.scrollRowToVisible(r)
+        let rect = table.rect(ofRow: r).intersection(scroll.documentVisibleRect)
+        popover.show(
+            relativeTo: NSRect(x: rect.maxX - 40, y: rect.minY, width: 24, height: rect.height), of: table,
+            preferredEdge: .maxY)
+    }
+
+    /// `c`: the threads on the cursor row.
+    func showThreadsAtCursor() { showThreads(row: cursor) }
+
+    /// Selects global row `r` and shows it with a few rows above.
+    func reveal(row r: Int) {
+        guard r >= 0, r < total else { return }
+        table.selectRowIndexes([r], byExtendingSelection: false)
+        scrollTo(row: r - 4)
+    }
+
+    @objc private func clicked() { showThreads(row: table.clickedRow) }
 
     func liveRowViews() -> Int { table.subviews.filter { $0 is RowView && !$0.isHidden }.count }
 

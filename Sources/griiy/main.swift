@@ -80,6 +80,8 @@ let shortcuts = """
     v        mark the file seen (or not)
     /  ⌘F    find: Return next, ⇧Return previous
     ⌘P       go to file
+    c        line comments on this line
+    ⌘I       PR panel (show or hide)
     Return   tree: show the file whole
     Escape   back to the diff
     ⌘/       this list
@@ -101,6 +103,9 @@ final class App: NSObject, NSApplicationDelegate {
     let goTo = GoToFile()
     let find = FindBar()
     let message = NSTextField(wrappingLabelWithString: "")
+    /// The PR's title, text and comments (F-PR-4), right of the diff; hidden for a local range.
+    let panel = TextPane()
+    private let split = NSSplitView()
     /// Stops the git opening the review when the window closes.
     let cancel = Cancel()
     private var review: Review?
@@ -128,7 +133,7 @@ final class App: NSObject, NSApplicationDelegate {
         let line = NSBox(frame: NSRect(x: 0, y: b.height - 33, width: b.width, height: 1))
         line.boxType = .separator
         line.autoresizingMask = [.width, .minYMargin]
-        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: b.width, height: b.height - 33))
+        split.frame = NSRect(x: 0, y: 0, width: b.width, height: b.height - 33)
         split.isVertical = true
         split.dividerStyle = .thin
         split.autoresizingMask = [.width, .height]
@@ -146,9 +151,13 @@ final class App: NSObject, NSApplicationDelegate {
         find.box.frame.origin = NSPoint(x: right.bounds.width - find.box.frame.width - 24, y: right.bounds.height - 44)
         find.box.autoresizingMask = [.minXMargin, .minYMargin]
         for v in [diff.scroll, full.scroll, message, find.box] { right.addSubview(v) }
+        panel.scroll.frame = NSRect(x: 0, y: 0, width: 360, height: split.bounds.height)
+        panel.scroll.isHidden = true
         split.addArrangedSubview(tree.scroll)
         split.addArrangedSubview(right)
+        split.addArrangedSubview(panel.scroll)
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        split.setHoldingPriority(.defaultHigh, forSubviewAt: 2)
         goTo.box.frame.origin = NSPoint(
             x: (b.width - goTo.box.frame.width) / 2, y: b.height - 60 - goTo.box.frame.height)
         goTo.box.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
@@ -161,6 +170,7 @@ final class App: NSObject, NSApplicationDelegate {
             diff.scrollTo(file: f)
         }
         tree.onOpen = { [unowned self] path in open(path) }
+        panel.onGoto = { [unowned self] n in goTo(thread: n) }
         diff.isSeen = { [unowned self] in seen.contains($0) }
         tree.isSeen = diff.isSeen
         full.isSeen = { [unowned self] _ in fullInDiff.map(seen.contains) ?? false }
@@ -180,6 +190,7 @@ final class App: NSObject, NSApplicationDelegate {
             switch key {
             case "/": find.open()
             case "v": toggleSeen()
+            case "c": shown.showThreadsAtCursor()
             case "n": shown.jump(files: false, forward: true)
             case "p": shown.jump(files: false, forward: false)
             case "]", "[":
@@ -207,6 +218,19 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func goToFile(_ sender: Any?) { goTo.open(tree.paths) }
     @objc func findInDiff(_ sender: Any?) { find.open() }
+    @objc func togglePanel(_ sender: Any?) {
+        guard review?.pr != nil else { return }
+        setPanel(shown: panel.scroll.isHidden)
+    }
+
+    /// Shows or hides the PR panel, taking its width from the diff, not the tree.
+    private func setPanel(shown: Bool) {
+        let width = tree.scroll.frame.width
+        panel.scroll.isHidden = !shown
+        split.adjustSubviews()
+        split.setPosition(width, ofDividerAt: 0)
+        if shown { split.setPosition(split.bounds.width - 360, ofDividerAt: 1) }
+    }
     @objc func showShortcuts(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "Keyboard Shortcuts"
@@ -236,6 +260,11 @@ final class App: NSObject, NSApplicationDelegate {
             self.doc = doc
             seen = doc.map(r.seen(in:)) ?? []
             diff.load(r.files)
+            if let pr = r.pr {
+                diff.threads = pr.threads
+                full.threads = pr.threads
+                setPanel(shown: true)
+            }
             header.attributedStringValue = headerText(r, total: nil)
             if r.files.isEmpty {
                 let hint = r.head == .workTree ? " To see the last commit: griiy HEAD~1..HEAD" : ""
@@ -250,7 +279,7 @@ final class App: NSObject, NSApplicationDelegate {
     private func headerText(_ r: Review, total: Int?) -> NSAttributedString {
         let s = NSMutableAttributedString(
             string: r.repo.string, attributes: [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: Palette.fg])
-        var rest = "   \(r.spec.label) · \(r.files.count) changed"
+        var rest = "   \(r.spec.label)" + (r.pr.map { " " + $0.title } ?? "") + " · \(r.files.count) changed"
         if let total { rest += " / \(total) files" }
         if !seen.isEmpty { rest += " · \(seen.count) seen" }
         s.append(
@@ -291,6 +320,17 @@ final class App: NSObject, NSApplicationDelegate {
         opening += 1
         // An error or "No changes" stays what's shown behind a whole file.
         show(review?.files.isEmpty == false ? diff.scroll : message)
+    }
+
+    /// The panel's thread `n`, on its line in the diff.
+    private func goTo(thread n: Int) {
+        guard let threads = review?.pr?.threads, n < threads.count, case let t = threads[n],
+            let f = diff.files.firstIndex(where: { $0.path == t.path }),
+            let row = threadRows([t], in: diff.files[f]).keys.first, let at = diff.startOf(t.path)
+        else { return }
+        showDiff()
+        diff.reveal(row: at + row)
+        window.makeFirstResponder(diff.table)
     }
 
     /// Fetches the file on a thread (git or the disk), then shows it if nothing was picked since.
@@ -370,11 +410,16 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// After first paint: the tree of every tracked file isn't needed to show the diff.
+    /// After first paint: the tree of every tracked file and the PR's text (100ms on a PR with a
+    /// few hundred comments) aren't needed to show the diff.
     private func fillTree() {
         guard let r = review else { return }
         let n = tree.fill(r.files, tracked: r.tracked)
         header.attributedStringValue = headerText(r, total: n)
+        if let pr = r.pr {
+            var images: [URL] = []
+            panel.show(panelText(pr, label: r.spec.label, images: &images), images: images)
+        }
     }
 }
 
@@ -406,6 +451,7 @@ editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquiv
 editMenu.addItem(withTitle: "Find…", action: #selector(App.findInDiff(_:)), keyEquivalent: "f")
 let goMenu = NSMenu(title: "Go")
 goMenu.addItem(withTitle: "Go to File…", action: #selector(App.goToFile(_:)), keyEquivalent: "p")
+goMenu.addItem(withTitle: "PR Info", action: #selector(App.togglePanel(_:)), keyEquivalent: "i")
 let helpMenu = NSMenu(title: "Help")
 helpMenu.addItem(withTitle: "Keyboard Shortcuts", action: #selector(App.showShortcuts(_:)), keyEquivalent: "/")
 let menu = NSMenu()
