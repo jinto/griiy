@@ -134,6 +134,7 @@
 
 ## M7 Explain 탭
 - [ ] **M7-1 정적 문서 렌더러 (F-EX-2, F-EX-3)** — 생성보다 먼저 만든다
+  - CI의 "No HTML parsing of PR text" grep(M2-4)이 `loadHTMLString`을 막는다. Explain 탭 파일은 그 grep에서 뺀다
   - ✓ 테스트 문서에 `<script>`, `onerror`, 외부 `<img>`, `fetch`, `window.ipc`, `griiy://api/` 링크를 넣어도 실행·요청·접근이 없다 · `griiy://goto` 외 navigation 차단
 - [ ] **M7-2 Mermaid → SVG (신뢰 영역)** ⟵ M7-1 · ✓ 오프라인 렌더, 문법 오류 블록은 원문 코드로 표시
 - [ ] **M7-3 설명 프롬프트와 큰 PR 분할 (F-EX-1, F-EX-4)** ⟵ M7-1 · ✓ 토큰 미리보기 후 확인해야 실행 · 상한 70% 초과 시 파일별 요약 후 합침

@@ -66,7 +66,7 @@ Nothing, unless you use a feature that needs it. Without AI or PRs, griiy works 
 | You ask a question (after you agree on first use) | Anthropic, through the `claude` CLI or the API | Your question and the evidence shown in the preview: selected code with nearby lines, related commit messages and history, PR text and comments |
 | You open a GitHub PR | GitHub, through `gh` and `git fetch` | PR metadata, comments and linked issues; the PR's commits |
 | (v0.2) Bitbucket Cloud PR, Jira ticket | Bitbucket, your Jira host | The same, for those services |
-| You click "show image" in a PR description | The image's host | An image request |
+| You click "show image" in a PR description or comment | The image's host | An image request |
 
 No telemetry, no accounts, no griiy servers.
 
