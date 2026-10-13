@@ -111,3 +111,43 @@ func diffArgs(_ base: String, _ head: Head) -> [String] {
     if case .sha(let h) = head { args.append(h) }
     return args
 }
+
+// ---- Seen marks (F-DV-9): `"seen": {path: version}` in the review's store document ----
+
+extension File {
+    /// The change a seen mark is for: blobs and modes on both sides, so a new head (or base) that
+    /// leaves this file alone keeps the mark. Status and old path tell apart the blobless changes
+    /// (pure renames, mode-only) that would otherwise all read the same.
+    public var version: String {
+        "\(status.rawValue) \(oldPath ?? "") \(oldBlob ?? "")..\(newBlob ?? "") \(oldMode ?? "")..\(newMode ?? "")"
+    }
+}
+
+extension Review {
+    /// The store key: ref names, not shas (PRD §7.4). `a..b` and `a...b` share it, and the work
+    /// tree's key ignores its base; marks hold only for the same `version`, so that's harmless.
+    public var key: String {
+        switch spec {
+        case .workTree: reviewKey(.workTree(repo: repo))
+        case .range(let base, let head, _): reviewKey(.range(repo: repo, base: base, head: head))
+        }
+    }
+
+    /// Indices of the files whose stored mark is for the change shown now.
+    public func seen(in doc: [String: Any]) -> Set<Int> {
+        let marks = doc["seen"] as? [String: String] ?? [:]
+        return Set(files.indices.filter { marks[files[$0].path] == files[$0].version })
+    }
+
+    /// `doc` with file `f`'s mark set or removed. Other paths keep theirs: a stale mark is
+    /// harmless, and reviews sharing the key don't erase each other's.
+    // ponytail: marks are per display path, so a type change (two files, one path) or two
+    // non-UTF-8 names that decode alike share one mark. Key by path bytes if that ever matters.
+    public func marking(_ f: Int, _ on: Bool, in doc: [String: Any]) -> [String: Any] {
+        var doc = doc
+        var marks = doc["seen"] as? [String: String] ?? [:]
+        marks[files[f].path] = on ? files[f].version : nil
+        doc["seen"] = marks
+        return doc
+    }
+}

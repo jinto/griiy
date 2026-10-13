@@ -78,6 +78,8 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var hits: [Hit] = []
     private var hit: Int?
     private var from = 0
+    /// Whether file `f` is marked seen (F-DV-9): a ✓ in its header.
+    var isSeen: (Int) -> Bool = { _ in false }
 
     override init() {
         super.init()
@@ -155,11 +157,20 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let view = tableView.makeView(withIdentifier: id, owner: nil) as? RowView ?? RowView()
         view.identifier = id
         let (f, row) = row(r)
-        configure(view, file: files[f], row ?? .note(""))
+        configure(view, file: f, row ?? .note(""))
         return view
     }
 
-    private func configure(_ v: RowView, file f: File, _ row: Row) {
+    /// Redraws file `f`'s header, after its seen mark changed.
+    func redraw(file f: Int) {
+        guard f < start.count, let v = table.rowView(atRow: start[f], makeIfNecessary: false) as? RowView else {
+            return
+        }
+        configure(v, file: f, .fileHeader)
+    }
+
+    private func configure(_ v: RowView, file i: Int, _ row: Row) {
+        let f = files[i]
         let plain: [NSAttributedString.Key: Any] = [
             .font: mono, .foregroundColor: Palette.fg, .paragraphStyle: paragraph,
         ]
@@ -177,8 +188,10 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if let old = f.oldPath { s.append(NSAttributedString(string: old + " → ", attributes: muted)) }
             s.append(NSAttributedString(string: f.path, attributes: plain.merging([.font: monoBold]) { $1 }))
             let (add, del) = f.stats
-            let st = NSMutableAttributedString(
-                string: "+\(add)", attributes: plain.merging([.foregroundColor: Palette.addText]) { $1 })
+            let st = NSMutableAttributedString(string: isSeen(i) ? "✓  " : "", attributes: muted)
+            st.append(
+                NSAttributedString(
+                    string: "+\(add)", attributes: plain.merging([.foregroundColor: Palette.addText]) { $1 }))
             st.append(
                 NSAttributedString(
                     string: " -\(del)", attributes: plain.merging([.foregroundColor: Palette.delText]) { $1 }))
@@ -218,8 +231,12 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         scroll.reflectScrolledClipView(clip)
     }
 
+    /// Selects the file's header too: near the end the scroll stops short, and the top row
+    /// would be an earlier file's (the cursor `v` and `n` go by).
     func scrollTo(file f: Int) {
-        if f < start.count { scrollTo(row: start[f]) }
+        guard f < start.count else { return }
+        table.selectRowIndexes([start[f]], byExtendingSelection: false)
+        scrollTo(row: start[f])
     }
 
     /// First row of the file at `path`, if it's in this diff.
@@ -230,14 +247,21 @@ final class DiffController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// cursor is `from`, else the last selected row on screen, else the top row. Stops at the ends.
     func jump(files byFile: Bool, forward: Bool, from: Int? = nil) {
         guard !files.isEmpty else { return }
-        let visible = table.rows(in: scroll.documentVisibleRect)
-        let cursor =
-            from ?? table.selectedRowIndexes.last { NSLocationInRange($0, visible) } ?? visible.location
+        let cursor = from ?? self.cursor
         let stops = byFile ? start : files.indices.flatMap { f in files[f].changes.map { start[f] + $0 } }
         guard let r = forward ? stops.first(where: { $0 > cursor }) : stops.last(where: { $0 < cursor }) else { return }
         table.selectRowIndexes([r], byExtendingSelection: false)
         scrollTo(row: byFile ? r : r - 4)
     }
+
+    /// The last selected row on screen, else the top row.
+    private var cursor: Int {
+        let visible = table.rows(in: scroll.documentVisibleRect)
+        return table.selectedRowIndexes.last { NSLocationInRange($0, visible) } ?? visible.location
+    }
+
+    /// The file at the cursor (`v`); nil in an empty diff.
+    var fileAtCursor: Int? { files.isEmpty ? nil : fileAt(cursor) }
 
     /// Searches for `q` unless the hits are already for it; returns how many there are.
     func find(_ q: String) -> Int {

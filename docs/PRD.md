@@ -67,7 +67,7 @@
 | F-DV-6 | (v0.2) 줄 안 단어 단위 강조 |
 | F-DV-7 | 검색: `⌘P` 파일 이름 퍼지 검색은 프론트에서, `/` diff 텍스트 검색은 코어(`GriiyCore`)에서 하고 결과 위치로 이동한다 |
 | F-DV-8 | 단축키: `]` `[` 파일, `n` `p` 변경 블록(hunk 안의 -/+ 묶음, 전체 보기에서도 같음), `/` `⌘P` 검색, `?` 질문, `v` 봤음, `⌘/` 도움말. (v0.2) `s` 보기 전환 |
-| F-DV-9 | 파일별 봤음 체크. head가 바뀌면 blob이 같은 파일만 체크를 이월한다 |
+| F-DV-9 | 파일별 봤음 체크. head나 base가 바뀌면 양쪽 blob과 모드가 같은 파일만 체크를 이월한다 |
 | F-DV-10 | 바이너리, 이름 변경, 모드 변경, 삭제, 대용량 파일(기본 1MB 초과는 접힘) 표시 |
 
 ### 6.4 AI 질문 ("왜 바뀌었지?")
@@ -133,7 +133,7 @@ griiy (AppKit 앱)  창, NSTableView diff, NSOutlineView 트리, Ask 패널, (v0
 ### 7.4 저장
 - 경로: `~/Library/Application Support/griiy/reviews/<key>.json`, 스키마 `version` 필드.
 - **리뷰 키:** GitHub `gh-<owner>-<repo>-<n>`, Bitbucket `bb-<ws>-<repo>-<n>`, 로컬 범위 `local-<repo 경로 해시>-<base ref 이름>-<head ref 이름>` (sha가 아니라 ref 이름이라 커밋해도 이어진다), 작업 트리 `local-<repo 해시>-worktree`.
-- 항목(질문, 봤음, Explain)마다 base/head sha를 함께 저장해 버전을 구분한다.
+- 항목(질문, Explain)마다 base/head sha를 함께 저장해 버전을 구분한다. 봤음은 파일의 양쪽 blob과 모드가 그 역할을 한다.
 - **민감정보:** 질문 기록에는 코드 스냅샷이 들어간다. 설정 화면에서 리뷰별·전체 삭제를 제공하고, README에 저장 위치를 적는다.
 
 ## 8. 비기능 요구사항

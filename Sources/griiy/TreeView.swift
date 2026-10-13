@@ -61,6 +61,8 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
     var onPick: (Int) -> Void = { _ in }
     /// Show this path whole: an unchanged file picked, or any file double-clicked.
     var onOpen: (String) -> Void = { _ in }
+    /// Whether changed file `f` is marked seen (F-DV-9): a ✓ before its +/-.
+    var isSeen: (Int) -> Bool = { _ in false }
 
     override init() {
         super.init()
@@ -165,7 +167,9 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
             let digits = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
             let (add, del) = files[i].stats
             let s = NSMutableAttributedString(
-                string: "+\(add)", attributes: [.foregroundColor: Palette.addText, .font: digits])
+                string: isSeen(i) ? "✓ " : "", attributes: [.foregroundColor: Palette.mut, .font: digits])
+            s.append(
+                NSAttributedString(string: "+\(add)", attributes: [.foregroundColor: Palette.addText, .font: digits]))
             s.append(
                 NSAttributedString(string: " -\(del)", attributes: [.foregroundColor: Palette.delText, .font: digits]))
             cell.stats.attributedStringValue = s
@@ -174,6 +178,11 @@ final class TreeController: NSObject, NSOutlineViewDataSource, NSOutlineViewDele
         }
         cell.needsLayout = true
         return cell
+    }
+
+    /// Redraws changed file `f`'s row, after its seen mark changed.
+    func redraw(file f: Int) {
+        if f < files.count, let leaf = leaves[files[f].path] { outline.reloadItem(leaf) }
     }
 
     /// Expands the folders above `path`, selects it and shows it as if clicked (⌘P).

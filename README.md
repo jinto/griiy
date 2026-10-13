@@ -37,7 +37,7 @@ Planned (v0.1): `griiy https://github.com/o/r/pull/42`, `griiy '#42'`.
 | What | Where |
 |---|---|
 | Settings | `~/Library/Application Support/griiy/config.toml` |
-| Per-review data (seen files, questions and answers, **including snapshots of the code you asked about**) *(planned)* | `~/Library/Application Support/griiy/reviews/<key>.json` |
+| Per-review data: seen files; *(planned)* questions and answers, **including snapshots of the code you asked about** | `~/Library/Application Support/griiy/reviews/<key>.json` |
 | Fetched PR refs *(planned)* | `refs/griiy/*` in your repository. griiy writes nothing else to your repo |
 | Secrets: tokens, API keys *(planned)* | macOS Keychain, service `griiy`. Never in the files above |
 

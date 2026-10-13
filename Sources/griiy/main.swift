@@ -66,6 +66,7 @@ func asciiKey(_ e: NSEvent) -> String? {
 let shortcuts = """
     ]  [     next / previous file
     n  p     next / previous change
+    v        mark the file seen (or not)
     /  ⌘F    find: Return next, ⇧Return previous
     ⌘P       go to file
     Return   tree: show the file whole
@@ -92,6 +93,10 @@ final class App: NSObject, NSApplicationDelegate {
     /// Stops the git opening the review when the window closes.
     let cancel = Cancel()
     private var review: Review?
+    /// Files marked seen (F-DV-9), and the store document they're saved in: nil when it couldn't
+    /// be read, so marks stay on screen and nothing overwrites the file.
+    private var seen: Set<Int> = []
+    private var doc: [String: Any]?
     private enum Phase {
         case waiting
         case error(String)
@@ -145,6 +150,9 @@ final class App: NSObject, NSApplicationDelegate {
             diff.scrollTo(file: f)
         }
         tree.onOpen = { [unowned self] path in open(path) }
+        diff.isSeen = { [unowned self] in seen.contains($0) }
+        tree.isSeen = diff.isSeen
+        full.isSeen = { [unowned self] _ in fullInDiff.map(seen.contains) ?? false }
         // Keys that work wherever focus is, except while typing in a field or over a sheet.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
             guard e.window === window, window.attachedSheet == nil, !(window.firstResponder is NSText) else { return e }
@@ -160,6 +168,7 @@ final class App: NSObject, NSApplicationDelegate {
             let key = asciiKey(e)
             switch key {
             case "/": find.open()
+            case "v": toggleSeen()
             case "n": shown.jump(files: false, forward: true)
             case "p": shown.jump(files: false, forward: false)
             case "]", "[":
@@ -205,14 +214,16 @@ final class App: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
 
-    /// On the main thread, with what Review.open returned.
-    func loaded(_ result: Result<Review, GitError>) {
+    /// On the main thread, with what Review.open returned and the review's store document.
+    func loaded(_ result: Result<Review, GitError>, doc: [String: Any]?) {
         switch result {
         case .failure(let e):
             showMessage(e.title, e.detail, e.hint)
             phase = .error(e.title)
         case .success(let r):
             review = r
+            self.doc = doc
+            seen = doc.map(r.seen(in:)) ?? []
             diff.load(r.files)
             header.attributedStringValue = headerText(r, total: nil)
             if r.files.isEmpty {
@@ -230,6 +241,7 @@ final class App: NSObject, NSApplicationDelegate {
             string: r.repo.string, attributes: [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: Palette.fg])
         var rest = "   \(r.spec.label) · \(r.files.count) changed"
         if let total { rest += " / \(total) files" }
+        if !seen.isEmpty { rest += " · \(seen.count) seen" }
         s.append(
             NSAttributedString(
                 string: rest, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: Palette.mut]))
@@ -315,6 +327,32 @@ final class App: NSObject, NSApplicationDelegate {
         link.invalidate()
     }
 
+    /// The whole file's index in the diff, if one is shown and the diff has it.
+    private var fullInDiff: Int? {
+        guard !full.scroll.isHidden, let path = full.files.first?.path else { return nil }
+        return diff.files.firstIndex { $0.path == path }
+    }
+
+    /// `v`: flips the mark of the file at the cursor (or the whole file shown) and saves it.
+    private func toggleSeen() {
+        // Behind an error message, neither: the cursor would be a file not on screen.
+        guard let r = review, let f = diff.scroll.isHidden ? fullInDiff : diff.fileAtCursor else { return }
+        let on = seen.insert(f).inserted
+        if !on { seen.remove(f) }
+        diff.redraw(file: f)
+        full.redraw(file: 0)
+        tree.redraw(file: f)
+        header.attributedStringValue = headerText(r, total: tree.paths.isEmpty ? nil : tree.paths.count)
+        guard let store, let d = doc else { return }
+        let next = r.marking(f, on, in: d)
+        doc = next
+        do {
+            try store.save(r.key, next)
+        } catch {
+            FileHandle.standardError.write(Data("griiy: saving seen files: \(error.message)\n".utf8))
+        }
+    }
+
     /// After first paint: the tree of every tracked file isn't needed to show the diff.
     private func fillTree() {
         guard let r = review else { return }
@@ -360,12 +398,21 @@ for sub in [appMenu, editMenu, goMenu, helpMenu] {
     menu.addItem(item)
 }
 app.mainMenu = menu
+let store = appDir().map { Store(root: $0.appending("reviews")) }
 let ui = App()
 app.delegate = ui
 // git runs while the window is being created. Review.open blocks, so it gets a thread, not a Task.
 let cancel = ui.cancel
 Thread.detachNewThread {
     let result = Result { () throws(GitError) in try Review.open(args.repo, args.spec, cancel: cancel) }
-    DispatchQueue.main.async { MainActor.assumeIsolated { ui.loaded(result) } }
+    var doc: [String: Any]?
+    if let store, case .success(let r) = result {
+        do throws(StoreError) {
+            doc = try store.load(r.key)
+        } catch {
+            FileHandle.standardError.write(Data("griiy: reading seen files: \(error.message)\n".utf8))
+        }
+    }
+    DispatchQueue.main.async { MainActor.assumeIsolated { ui.loaded(result, doc: doc) } }
 }
 app.run()
