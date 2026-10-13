@@ -6,6 +6,8 @@ import System
 public enum GitError: Error, Equatable, Sendable {
     case gitMissing
     case ghMissing
+    /// gh is there but not logged in, or its token no longer works.
+    case ghAuth
     case notARepo(path: String)
     case noCommits(path: String)
     case badRange(spec: String, detail: String)
@@ -20,6 +22,7 @@ public enum GitError: Error, Equatable, Sendable {
         switch self {
         case .gitMissing: "git is not installed"
         case .ghMissing: "The GitHub CLI (gh) is not installed"
+        case .ghAuth: "Log in to the GitHub CLI"
         case .notARepo(let path): "\(path) is not a git repository"
         case .noCommits(let path): "\(path) has no commits yet"
         case .badRange(let spec, _): "Unknown revision or range: \(spec)"
@@ -38,6 +41,8 @@ public enum GitError: Error, Equatable, Sendable {
             "Install git (xcode-select --install or brew install git) and make sure it is on PATH."
         case .ghMissing:
             "griiy asks GitHub about pull requests through gh: brew install gh, then gh auth login. Installed already? Launch griiy from a terminal so it finds gh on PATH."
+        case .ghAuth:
+            "griiy reads pull requests through gh, which isn't logged in to github.com: gh auth login. Logged in already? gh auth status shows what's wrong."
         case .notARepo: "Run griiy inside a git repository, or pass its path: griiy -C path/to/repo."
         case .noCommits: "Make a first commit, then run griiy again."
         case .badRange:

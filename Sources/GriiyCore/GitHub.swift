@@ -116,8 +116,9 @@ func prRefs(_ pr: GitHubRepo, _ number: Int) -> String {
     return "refs/griiy/gh/\(ref(pr.owner))/\(ref(pr.name))/\(number)"
 }
 
-/// The PR's base commit as GitHub has it: the base branch tip while open, kept as it was once
-/// closed or merged (closed PRs have no `refs/pull/<n>/merge` to find it from). Blocking.
+/// The PR's base commit as GitHub last synced it, kept as it was once closed or merged (closed PRs
+/// have no `refs/pull/<n>/merge` to find it from). Blocking. The REST call, not `pullRequestInfo`:
+/// that one takes seconds on a busy PR, so it runs alongside the fetch instead of before it.
 func pullBase(_ pr: GitHubRepo, _ number: Int, cancel: Cancel?) throws(GitError) -> String {
     // --hostname: GH_HOST could point gh at another server.
     let args = ["api", "--hostname", "github.com", "repos/\(pr.label)/pulls/\(number)", "--jq", ".base.sha"]
@@ -129,6 +130,7 @@ func pullBase(_ pr: GitHubRepo, _ number: Int, cancel: Cancel?) throws(GitError)
     }
     let answer = String(decoding: out, as: UTF8.self)
     guard status == 0, let sha = baseSha(answer) else {
+        if isAuthFailure(status, err) { throw .ghAuth }
         let why = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         throw .fetchFailed(remote: "GitHub", detail: why.isEmpty ? "unexpected answer: \(answer.prefix(200))" : why)
     }
@@ -175,4 +177,203 @@ func fetchPullRequest(
         .split(separator: "\n").map(String.init)
     guard shas.count == 2 else { throw .git(detail: "can't read \(ns)") }
     return (shas[0], shas[1])
+}
+
+// ---- The PR as GitHub has it (F-PR-4, F-AI-2 ③): one GraphQL query ----
+
+public struct PullRequest: Equatable, Sendable {
+    public var title, body, author, url: String
+    /// OPEN, CLOSED or MERGED, as GitHub says it.
+    public var state: String
+    /// Issue comments and reviews, oldest first. Bodies are Markdown as written (F-PR-5 is the panel's).
+    public var comments: [Comment]
+    public var threads: [ReviewThread]
+    /// GitHub's linked issues: closed by a keyword in the body, or linked by hand.
+    public var issues: [LinkedIssue]
+    /// A list had more than the query asks for (100 each, 20 issues): GitHub has the rest.
+    public var truncated: Bool
+}
+
+public struct Comment: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case issue
+        case review(state: String)
+        case reviewComment
+    }
+    public var kind: Kind
+    public var author, body: String
+    /// ISO-8601 UTC, as GitHub sends it.
+    public var created: String
+    /// Its page on GitHub; the anchor tells the kind and id (`#issuecomment-…`, `#discussion_r…`).
+    public var url: String
+}
+
+/// Line comments on one spot, replies in order.
+public struct ReviewThread: Equatable, Sendable {
+    public var path: String
+    public var side: Side
+    /// File lines on `side` in this diff; nil when there is no place for it: outdated, a file
+    /// comment, or anything GitHub sends that doesn't fit.
+    public var lines: Range<Int>?
+    public var resolved, outdated: Bool
+    public var comments: [Comment]
+}
+
+public struct LinkedIssue: Equatable, Sendable {
+    public var number: Int
+    /// owner/name: a linked issue can be in another repository.
+    public var repo, title, body, state, url: String
+}
+
+private let prQuery = """
+    query($owner: String!, $name: String!, $n: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $n) {
+          title body state url author { login }
+          comments(first: 100) { totalCount nodes { author { login } body createdAt url } }
+          reviews(first: 100, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
+            totalCount nodes { author { login } body state submittedAt url }
+          }
+          reviewThreads(first: 100) {
+            totalCount
+            nodes {
+              path diffSide startDiffSide line startLine isResolved isOutdated subjectType
+              comments(first: 100) { totalCount nodes { author { login } body createdAt url state } }
+            }
+          }
+          closingIssuesReferences(first: 20) {
+            totalCount nodes { number title body state url repository { nameWithOwner } }
+          }
+        }
+      }
+    }
+    """
+
+/// PR `number`'s title, body, comments, line comments and linked issues. Blocking; seconds on a busy PR.
+// ponytail: no paging past 100 per list; `truncated` says so. Page with `after:` if it matters.
+func pullRequestInfo(_ pr: GitHubRepo, _ number: Int, cancel: Cancel?) throws(GitError) -> PullRequest {
+    // -f: owner and name stay strings (-F would make `123` a number and read `@x` from a file).
+    let args = [
+        "api", "graphql", "--hostname", "github.com", "-f", "owner=\(pr.owner)", "-f", "name=\(pr.name)", "-F",
+        "n=\(number)", "-f", "query=\(prQuery)",
+    ]
+    do {
+        let (status, out, err) = try spawn("gh", repo: nil, args, cancel: cancel)
+        return try decodePullRequest(status: status, out: out, err: err)
+    } catch .gitMissing {
+        throw .ghMissing
+    }
+}
+
+/// gh's answer, judged by what is on stdout: any GraphQL `errors` entry makes gh exit 1 even
+/// when the PR came back whole (a linked issue we can't see), and then the PR still opens.
+func decodePullRequest(status: Int32, out: [UInt8], err: [UInt8]) throws(GitError) -> PullRequest {
+    if isAuthFailure(status, err) { throw .ghAuth }
+    let stderr = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    let answer = try? JSONDecoder().decode(Answer.self, from: Data(out))
+    if let pr = answer?.data?.repository?.pullRequest { return pr.model }
+    let why = answer?.errors?.first?.message ?? (stderr.hasPrefix("gh: ") ? String(stderr.dropFirst(4)) : stderr)
+    throw .fetchFailed(
+        remote: "GitHub",
+        detail: !why.isEmpty ? why : status != 0 ? "gh exited with \(status)" : "unexpected answer from gh")
+}
+
+/// Not logged in is exit 4; a revoked or expired token is exit 1 with GitHub's 401.
+private func isAuthFailure(_ status: Int32, _ err: [UInt8]) -> Bool {
+    status == 4 || String(decoding: err, as: UTF8.self).contains("(HTTP 401)")
+}
+
+/// File lines `start...end`, or nil unless both are real line numbers in order.
+func lineRange(_ start: Int?, _ end: Int?) -> Range<Int>? {
+    guard let end, end < Int.max else { return nil }
+    let start = start ?? end
+    guard start > 0, start <= end else { return nil }
+    return start..<end + 1
+}
+
+// The answer's shape. Everything GitHub may leave out or null is optional.
+private struct Answer: Decodable {
+    struct Data: Decodable { var repository: Repository? }
+    struct Repository: Decodable { var pullRequest: PR? }
+    struct Failure: Decodable { var message: String? }
+    var data: Data?
+    var errors: [Failure]?
+}
+
+private struct Login: Decodable { var login: String }
+
+private struct List<T: Decodable>: Decodable {
+    var totalCount: Int
+    /// Null, or holding nulls, where a partial error left a gap; GitHub still has those.
+    var nodes: [T?]?
+    var all: [T] { (nodes ?? []).compactMap { $0 } }
+    var cut: Bool { totalCount > all.count }
+}
+
+private struct PR: Decodable {
+    struct Note: Decodable {
+        var author: Login?
+        var body: String
+        var createdAt: String?
+        var submittedAt: String?
+        var url: String
+        var state: String?
+        func model(_ kind: Comment.Kind) -> Comment {
+            // A deleted account comes back null; GitHub's pages call it ghost.
+            Comment(
+                kind: kind, author: author?.login ?? "ghost", body: body, created: createdAt ?? submittedAt ?? "",
+                url: url)
+        }
+    }
+    struct Thread: Decodable {
+        var path: String
+        var diffSide, startDiffSide, subjectType: String?
+        var line, startLine: Int?
+        var isResolved, isOutdated: Bool
+        var comments: List<Note>
+    }
+    struct Issue: Decodable {
+        struct Repo: Decodable { var nameWithOwner: String }
+        var number: Int
+        var title, body, state, url: String
+        var repository: Repo
+    }
+    var title, body, state, url: String
+    var author: Login?
+    var comments: List<Note>
+    /// Nullable in GitHub's schema: a partial error can null them out.
+    var reviews: List<Note>?
+    var reviewThreads: List<Thread>
+    var closingIssuesReferences: List<Issue>?
+
+    var model: PullRequest {
+        // A COMMENTED review with no body is only the envelope its line comments came in.
+        let said = (reviews?.all ?? []).filter { !$0.body.isEmpty || $0.state != "COMMENTED" }
+        let notes =
+            comments.all.map { $0.model(.issue) } + said.map { $0.model(.review(state: $0.state ?? "")) }
+        // A thread holding only the viewer's unsent drafts isn't there for anyone else.
+        let threads = reviewThreads.all.filter { $0.comments.all.contains { $0.state == "SUBMITTED" } }.map { t in
+            let side: Side? = ["LEFT": .base, "RIGHT": .head][t.diffSide ?? ""]
+            // A range across both sides (a -/+ block) keeps its end line; span() widens it to the block.
+            let start = (t.startDiffSide ?? t.diffSide) == t.diffSide ? t.startLine : nil
+            let placed = side != nil && !t.isOutdated && t.subjectType == "LINE"
+            return ReviewThread(
+                path: t.path, side: side ?? .head, lines: placed ? lineRange(start, t.line) : nil,
+                resolved: t.isResolved, outdated: t.isOutdated,
+                // A PENDING comment is an unsent draft, seen only by its author.
+                comments: t.comments.all.filter { $0.state == "SUBMITTED" }.map { $0.model(.reviewComment) })
+        }
+        return PullRequest(
+            title: title, body: body, author: author?.login ?? "ghost", url: url, state: state,
+            // ISO-8601 UTC strings of one format sort as times; ties keep their order (sort is stable).
+            comments: notes.sorted { $0.created < $1.created },
+            threads: threads,
+            issues: (closingIssuesReferences?.all ?? []).map {
+                LinkedIssue(
+                    number: $0.number, repo: $0.repository.nameWithOwner, title: $0.title, body: $0.body,
+                    state: $0.state, url: $0.url)
+            },
+            truncated: comments.cut || reviews?.cut ?? true || reviewThreads.cut || closingIssuesReferences?.cut ?? true
+                || reviewThreads.all.contains { $0.comments.cut })
+    }
 }

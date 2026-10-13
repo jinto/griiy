@@ -80,8 +80,9 @@
 - [x] **M2-2 fetch:** `refs/griiy/gh/<owner>/<repo>/<n>/{head,base}`, merge-base 계산
   - ✓ 실행 전후 `git for-each-ref refs/heads refs/remotes refs/tags` 동일 · 재fetch(force-push)도 정상 · 공개 저장소 PR 하나로 수동 확인
   - 결과 (2026-10-13): 닫힌 PR에는 `refs/pull/<n>/merge`가 없어 base는 `gh api --hostname github.com repos/o/r/pulls/n --jq .base.sha`로 묻고(정확히 40/64자 소문자 hex만 받는다), fetch 한 번에 `+refs/pull/<n>/head`와 `+<base sha>`를 `refs/griiy/gh/<o>/<r>/<n>/{head,base}`로 받는다. 이름의 `[a-z0-9_-]` 밖 바이트는 `%XX`라 `.github`, `x.lock`도 ref가 된다. diff base는 merge-base(GitHub "Files changed"와 같다). `#n`은 찾은 저장소로 바뀌어 URL과 키·라벨이 같다. `--refmap= --no-write-fetch-head --no-tags --no-recurse-submodules --no-auto-maintenance -c fetch.writeCommitGraph=false`로 사용자 설정(pr 매핑 fetch refspec, commit-graph, 태그)이 있어도 `refs/griiy` 밖 ref와 FETCH_HEAD·commit-graph가 그대로다(테스트, 옵션마다 mutation 확인). fetch·gh 실패는 모두 `fetchFailed`(ssh "Permission denied"가 저장소 권한 화면이 되지 않게), gh가 없으면 `ghMissing`, 얕은 clone은 `--unshallow` 안내. `spawn`이 자식의 signal mask를 비운다: 부르는 스레드의 SIGTERM 차단이 상속되어 실패한 fetch가 upload-pack을 영원히 기다렸다(테스트가 잡음). octocat/Hello-World#11481(닫힌 PR)을 URL과 `#n`으로 열어 `gh pr diff`와 같은 diff, `refs/griiy` 밖 ref 동일 확인. 최소 git 2.29를 README에 적었다. docs/PLAN-M2-2.md
-- [ ] **M2-3 메타데이터와 코멘트:** `gh api`로 PR, 리뷰 코멘트, 이슈 코멘트, 연결 이슈
+- [x] **M2-3 메타데이터와 코멘트:** `gh api`로 PR, 리뷰 코멘트, 이슈 코멘트, 연결 이슈
   - ✓ `gh` 응답 fixture로 파싱 테스트 · `gh` 없음/미로그인 → 안내 화면
+  - 결과 (2026-10-13): GraphQL 한 번(`pullRequestInfo`)이 제목·본문·작성자·상태, 이슈 코멘트와 리뷰(시간순, 본문 없는 COMMENTED 리뷰는 뺌), 리뷰 스레드, 연결 이슈(`closingIssuesReferences`)를 `Review.pr`로 준다. 큰 PR에서 수 초(rust#137944 4–7s)라 base용 REST `pullBase`는 그대로 두고 이 쿼리는 fetch·diff와 동시에 돈다. 판정은 stdout으로: 부분 `errors`가 있어도(gh exit 1) PR이 왔으면 열리고, null이 된 목록은 `truncated`. 스레드는 `side`와 현재 diff의 줄 범위(`lines`)를 갖고, outdated·파일 코멘트·모르는 side는 `lines` nil, 양쪽에 걸친 범위는 끝 줄(M1-4 `span`이 블록으로 넓힌다). 작성 중(PENDING) 리뷰·코멘트는 뺀다. 각 목록 100개(이슈 20개)를 넘으면 `truncated`. 미로그인(exit 4)·만료 토큰(HTTP 401)은 새 `ghAuth` 화면(`pullBase`도 같다). 실제 PR(cli/cli#14278, #14578, #11000, rust#137944)을 코드로 디코딩해 확인, 로그아웃 상태로 앱을 띄워 안내 화면 확인. 본문·커밋의 `#n` 언급 이슈는 M3-4. docs/PLAN-M2-3.md
 - [ ] **M2-4 PR 패널과 안전 Markdown (F-PR-4, F-PR-5)**
   - ✓ 악성 Markdown fixture(`<script>`, `<img onerror>`, `javascript:` 링크, 외부 이미지, iframe)에서 스크립트 실행·HTML 해석·외부 요청이 없다 · 줄 코멘트가 해당 줄 옆에 보인다
 
@@ -92,7 +93,7 @@
   - ✓ unified에서 고른 선택과 같은 범위를 파일 전체 보기에서 고른 선택이 같은 근거를 만든다
 - [ ] **M3-3 근거 ② 이력 (F-AI-2):** `log -L`, `log base..head`, blame, timeout, 상한, fallback, 캐시
   - ✓ fixture: 일반, rename된 파일, 2,000줄 초과(→ fallback), 바이너리(→ 제외), timeout(→ fallback) · 같은 질문 두 번째는 캐시 사용
-- [ ] **M3-4 근거 ③ PR (F-AI-2):** 본문, 코멘트(해당 파일 우선), 연결 이슈
+- [ ] **M3-4 근거 ③ PR (F-AI-2):** 본문, 코멘트(해당 파일 우선), 연결 이슈. 본문·커밋 메시지의 `#n` 언급 이슈도 여기서 모은다(M2-3은 GitHub의 연결 이슈만 받는다)
   - ✓ 토큰 상한 상황에서 해당 파일 코멘트가 다른 파일 코멘트보다 먼저 남는다
 - [ ] **M3-5 프롬프트, 인용, 인젝션 방어 (F-AI-3, F-AI-4):** `prompt_version` 상수, 신뢰할 수 없는 자료 구획, 인용 ID 검증
   - ✓ 인용 파서 단위 테스트(정상, 없는 ID, 깨진 형식) · 인젝션 fixture(코드 주석·PR 본문·코멘트에 "이전 지시를 무시하고…")로 기록된 응답 회귀 테스트

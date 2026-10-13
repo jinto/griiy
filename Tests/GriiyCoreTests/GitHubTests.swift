@@ -279,3 +279,165 @@ private func prRepos() -> (remote: TempDir, local: TempDir, base: String) {
         #expect(detail.contains("--unshallow"))
     }
 }
+
+// ---- M2-3: the PR as GitHub has it, from one GraphQL answer ----
+
+/// Shaped like gh's answer for cli/cli#14578 and #14278, cut down: one of each kind of node.
+private let answer = #"""
+    {"data":{"repository":{"pullRequest":{
+      "title":"Replace extension browse","body":"Fixes #7068.\n\n<script>x</script>","state":"MERGED",
+      "url":"https://github.com/cli/cli/pull/14578","author":{"login":"BagToad"},
+      "comments":{"totalCount":2,"nodes":[
+        {"author":null,"body":"later","createdAt":"2026-10-03T00:00:00Z","url":"https://github.com/cli/cli/pull/14578#issuecomment-2"},
+        {"author":{"login":"a"},"body":"first","createdAt":"2026-10-01T00:00:00Z","url":"https://github.com/cli/cli/pull/14578#issuecomment-1"}]},
+      "reviews":{"totalCount":3,"nodes":[
+        {"author":{"login":"r"},"body":"","state":"COMMENTED","submittedAt":"2026-10-02T00:00:00Z","url":"u#pullrequestreview-1"},
+        {"author":{"login":"r"},"body":"","state":"APPROVED","submittedAt":"2026-10-04T00:00:00Z","url":"u#pullrequestreview-2"},
+        {"author":{"login":"r"},"body":"Looks off","state":"COMMENTED","submittedAt":"2026-10-02T00:00:00Z","url":"u#pullrequestreview-3"}]},
+      "reviewThreads":{"totalCount":5,"nodes":[
+        {"path":"a.go","diffSide":"RIGHT","startDiffSide":"RIGHT","line":423,"startLine":384,"isResolved":true,"isOutdated":true,"subjectType":"LINE",
+         "comments":{"totalCount":1,"nodes":[{"author":{"login":"c"},"body":"old","createdAt":"2026-10-02T16:20:57Z","url":"u#discussion_r1","state":"SUBMITTED"}]}},
+        {"path":"b.go","diffSide":"RIGHT","startDiffSide":null,"line":38,"startLine":null,"isResolved":false,"isOutdated":false,"subjectType":"LINE",
+         "comments":{"totalCount":2,"nodes":[
+           {"author":{"login":"c"},"body":"why?","createdAt":"2026-10-02T00:00:00Z","url":"u#discussion_r2","state":"SUBMITTED"},
+           {"author":{"login":"me"},"body":"draft","createdAt":"2026-10-03T00:00:00Z","url":"u#discussion_r3","state":"PENDING"}]}},
+        {"path":"capi/job.go","diffSide":"RIGHT","startDiffSide":"LEFT","line":30,"startLine":29,"isResolved":false,"isOutdated":false,"subjectType":"LINE",
+         "comments":{"totalCount":1,"nodes":[{"author":{"login":"c"},"body":"both sides","createdAt":"2026-10-02T00:00:00Z","url":"u#discussion_r4","state":"SUBMITTED"}]}},
+        {"path":"old.go","diffSide":"LEFT","startDiffSide":"LEFT","line":10,"startLine":8,"isResolved":false,"isOutdated":false,"subjectType":"LINE",
+         "comments":{"totalCount":1,"nodes":[{"author":{"login":"c"},"body":"removed","createdAt":"2026-10-02T00:00:00Z","url":"u#discussion_r5","state":"SUBMITTED"}]}},
+        {"path":"README.md","diffSide":"RIGHT","startDiffSide":null,"line":null,"startLine":null,"isResolved":false,"isOutdated":false,"subjectType":"FILE",
+         "comments":{"totalCount":1,"nodes":[{"author":{"login":"c"},"body":"whole file","createdAt":"2026-10-02T00:00:00Z","url":"u#discussion_r6","state":"SUBMITTED"}]}}]},
+      "closingIssuesReferences":{"totalCount":1,"nodes":[
+        {"number":7068,"title":"Browse is slow","body":"It hangs.","state":"CLOSED","url":"https://github.com/cli/cli/issues/7068","repository":{"nameWithOwner":"cli/cli"}}]}
+    }}}}
+    """#
+
+private func decode(_ json: String, status: Int32 = 0, err: String = "") throws(GitError) -> PullRequest {
+    try decodePullRequest(status: status, out: Array(json.utf8), err: Array(err.utf8))
+}
+
+@Test func pullRequestFromGraphQL() throws {
+    let pr = try decode(answer)
+    #expect(pr.title == "Replace extension browse" && pr.author == "BagToad")
+    #expect(pr.state == "MERGED" && pr.url == "https://github.com/cli/cli/pull/14578")
+    // Markdown as written: escaping is the panel's (F-PR-5).
+    #expect(pr.body.contains("<script>"))
+    // Issue comments and reviews in time order; a COMMENTED review with no body only holds line comments.
+    #expect(pr.comments.map(\.body) == ["first", "Looks off", "later", ""])
+    #expect(pr.comments.map(\.kind) == [.issue, .review(state: "COMMENTED"), .issue, .review(state: "APPROVED")])
+    #expect(pr.comments[2].author == "ghost")
+    #expect(pr.comments[0].url.hasSuffix("#issuecomment-1"))
+    #expect(!pr.truncated)
+
+    #expect(pr.threads.map(\.path) == ["a.go", "b.go", "capi/job.go", "old.go", "README.md"])
+    // Outdated: its line numbers point nowhere in this diff, even when GitHub sends some.
+    #expect(pr.threads[0].lines == nil && pr.threads[0].outdated && pr.threads[0].resolved)
+    // One line; a draft reply (PENDING) is its author's alone.
+    #expect(pr.threads[1].side == .head && pr.threads[1].lines == 38..<39)
+    #expect(pr.threads[1].comments.map(\.body) == ["why?"] && pr.threads[1].comments[0].kind == .reviewComment)
+    // Spanning a -/+ block: its end line, which span() widens to the block.
+    #expect(pr.threads[2].side == .head && pr.threads[2].lines == 30..<31)
+    #expect(pr.threads[3].side == .base && pr.threads[3].lines == 8..<11)
+    #expect(pr.threads[4].lines == nil)
+
+    #expect(
+        pr.issues == [
+            LinkedIssue(
+                number: 7068, repo: "cli/cli", title: "Browse is slow", body: "It hangs.", state: "CLOSED",
+                url: "https://github.com/cli/cli/issues/7068")
+        ])
+}
+
+@Test func draftOnlyThreadsAreLeftOut() throws {
+    let drafts = answer.replacingOccurrences(
+        of: #""body":"removed","createdAt":"2026-10-02T00:00:00Z","url":"u#discussion_r5","state":"SUBMITTED""#,
+        with: #""body":"removed","createdAt":"2026-10-02T00:00:00Z","url":"u#discussion_r5","state":"PENDING""#)
+    #expect(drafts != answer)
+    #expect(try decode(drafts).threads.map(\.path) == ["a.go", "b.go", "capi/job.go", "README.md"])
+}
+
+@Test func truncatedWhenAnyListIsCut() throws {
+    for (from, to) in [
+        (#""comments":{"totalCount":2"#, #""comments":{"totalCount":3"#),
+        (#""reviews":{"totalCount":3"#, #""reviews":{"totalCount":300"#),
+        (#""reviewThreads":{"totalCount":5"#, #""reviewThreads":{"totalCount":6"#),
+        (
+            #""totalCount":1,"nodes":[{"author":{"login":"c"},"body":"old""#,
+            #""totalCount":9,"nodes":[{"author":{"login":"c"},"body":"old""#
+        ),
+        (#""closingIssuesReferences":{"totalCount":1"#, #""closingIssuesReferences":{"totalCount":21"#),
+    ] {
+        let cut = answer.replacingOccurrences(of: from, with: to)
+        #expect(cut != answer, "\(from)")
+        #expect(try decode(cut).truncated, "\(to)")
+    }
+}
+
+@Test func strangeThreadsGetNoLines() throws {
+    func lines(_ fields: String) throws -> Range<Int>? {
+        let t =
+            #"{"path":"x","isResolved":false,"isOutdated":false,"comments":{"totalCount":1,"nodes":[{"body":"b","createdAt":"t","url":"u","state":"SUBMITTED"}]},"#
+        let json = answer.replacingOccurrences(
+            of: #""reviewThreads":{"totalCount":5,"nodes":["#,
+            with: #""reviewThreads":{"totalCount":6,"nodes":["# + t + fields + "},")
+        return try decode(json).threads[0].lines
+    }
+    let ok = #""subjectType":"LINE","diffSide":"RIGHT""#
+    #expect(try lines(ok + #","line":5,"startLine":5"#) == 5..<6)
+    for bad in [
+        #","line":0"#, #","line":-3"#, #","line":5,"startLine":0"#, #","line":5,"startLine":9"#,
+        #","line":9223372036854775807"#, #","line":null"#, "",
+    ] {
+        #expect(try lines(ok + bad) == nil, "\(bad)")
+    }
+    // A side or subject GitHub may add later: shown in the panel, not placed on a line.
+    #expect(try lines(#""subjectType":"LINE","diffSide":"MIDDLE","line":5"#) == nil)
+    #expect(try lines(#""subjectType":"HUNK","diffSide":"RIGHT","line":5"#) == nil)
+    #expect(try lines(#""diffSide":"RIGHT","line":5"#) == nil)
+}
+
+@Test func partialErrorsStillOpen() throws {
+    // Any `errors` entry makes gh exit 1, with the data it did get on stdout.
+    let partial = String(answer.dropLast()) + #","errors":[{"type":"FORBIDDEN","message":"no access to an issue"}]}"#
+    #expect(try decode(partial, status: 1, err: "gh: no access to an issue").title == "Replace extension browse")
+    // A list GitHub couldn't give whole: null, or with null entries. The rest opens, marked cut.
+    let noReviews = partial.replacingOccurrences(of: #""reviews":{"totalCount":3,"#, with: #""reviews":null,"x":{"#)
+    #expect(noReviews != partial)
+    #expect(try decode(noReviews, status: 1).truncated)
+    for gap in [#""nodes":null"#, #""nodes":[null]"#] {
+        let json = partial.replacingOccurrences(
+            of: #""closingIssuesReferences":{"totalCount":1,"nodes":["#,
+            with: #""closingIssuesReferences":{"totalCount":1,"# + gap + #","x":["#)
+        #expect(json != partial)
+        let pr = try decode(json, status: 1)
+        #expect(pr.issues.isEmpty && pr.truncated, "\(gap)")
+    }
+}
+
+@Test func gitHubFailures() {
+    func failure(_ json: String, status: Int32 = 1, err: String = "") -> GitError? {
+        do {
+            _ = try decode(json, status: status, err: err)
+            return nil
+        } catch { return error }
+    }
+    let notFound =
+        #"{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a PullRequest with the number of 10500."}]}"#
+    #expect(
+        failure(notFound)
+            == .fetchFailed(remote: "GitHub", detail: "Could not resolve to a PullRequest with the number of 10500."))
+    #expect(
+        failure(#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"no repo"}]}"#)
+            == .fetchFailed(remote: "GitHub", detail: "no repo"))
+    // Not logged in: exit 4. A revoked token: exit 1 and HTTP 401.
+    #expect(failure("", status: 4, err: "To get started with GitHub CLI, please run:  gh auth login") == .ghAuth)
+    #expect(failure(#"{"message":"Bad credentials","status":"401"}"#, err: "gh: Bad credentials (HTTP 401)") == .ghAuth)
+    #expect(
+        failure("", err: "error connecting to api.github.com")
+            == .fetchFailed(remote: "GitHub", detail: "error connecting to api.github.com"))
+    #expect(failure("", err: "") == .fetchFailed(remote: "GitHub", detail: "gh exited with 1"))
+    // Exit 0 but not the answer asked for.
+    for json in ["", "null", "[]", #"{"data":{}}"#, #"{"data":{"repository":{"pullRequest":{"title":"t"}}}}"#] {
+        guard case .fetchFailed = failure(json, status: 0) else { return #expect(Bool(false), "\(json)") }
+    }
+}

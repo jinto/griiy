@@ -20,6 +20,8 @@ public struct Review: Sendable {
     /// Every file in head, NUL-separated, for the tree: the commit's tree, or the index for the work tree.
     public var tracked: String
     public var gitMs: Int
+    /// The PR's title, comments and linked issues; nil for local ranges.
+    public var pr: PullRequest?
 
     /// Blocking: run it off the main thread. `cancel` stops the git running now and any after it.
     public static func open(_ dir: FilePath, _ spec: Spec, cancel: Cancel? = nil) throws(GitError) -> Review {
@@ -40,6 +42,7 @@ public struct Review: Sendable {
             }
         }
         var spec = spec
+        var info: Background<PullRequest>?
         let base: String
         let head: Head
         switch spec {
@@ -51,8 +54,11 @@ public struct Review: Sendable {
             head = .sha(z)
         case .pullRequest(let want, let number):
             let (remote, pr) = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), want, number: number)
+            let sha = try pullBase(pr, number, cancel: cancel)
+            // Seconds on a busy PR: it runs alongside the fetch and the diff.
+            info = Background { () throws(GitError) in try pullRequestInfo(pr, number, cancel: cancel) }
             (spec, base, head) = try pullRequest(
-                repo, remote: remote, pr, number, base: pullBase(pr, number, cancel: cancel), cancel: cancel)
+                repo, remote: remote, pr, number, base: sha, cancel: cancel)
         }
         // The tree's listing runs alongside the diff instead of after it. -z: names unquoted.
         let list =
@@ -60,9 +66,10 @@ public struct Review: Sendable {
         let tracked = Background { () throws(GitError) in try git(repo, list, cancel: cancel) }
         let files = parseDiff(try run("git", repo: repo, diffArgs(base, head), cancel: cancel))
         let ls = try tracked.wait()
+        let pr = try info?.wait()
         return Review(
             repo: repo, spec: spec, base: base, head: head, files: files, tracked: ls,
-            gitMs: Int(Date().timeIntervalSince(start) * 1000))
+            gitMs: Int(Date().timeIntervalSince(start) * 1000), pr: pr)
     }
 
     /// PR `number` fetched, as a resolved spec and a three-dot diff like GitHub's "Files changed".
