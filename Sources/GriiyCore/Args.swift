@@ -1,7 +1,8 @@
-// Command line: `griiy [<range>] [-C <repo>]` (F-IN-1), ranges meaning what they mean to git (F-IN-2).
+// Command line: `griiy [<range> | <PR URL> | #<n>] [-C <repo>]` (F-IN-1), ranges meaning what they
+// mean to git (F-IN-2).
 import System
 
-let usage = "usage: griiy [<rev> | <a>..<b> | <a>...<b>] [-C <repo>]"
+let usage = "usage: griiy [<rev> | <a>..<b> | <a>...<b> | <GitHub PR URL> | '#<n>'] [-C <repo>]"
 
 public enum Spec: Equatable, Sendable {
     /// `griiy` or `griiy <rev>`: `base` (default HEAD) vs the working tree, index included.
@@ -9,6 +10,8 @@ public enum Spec: Equatable, Sendable {
     /// `a..b` compares the endpoints; `a...b` (`mergeBase`) compares b with merge-base(a, b).
     /// An empty side is HEAD.
     case range(base: String, head: String, mergeBase: Bool)
+    /// `griiy <PR URL>`, or `griiy '#n'` with `repo` nil: the remotes decide which repo.
+    case pullRequest(repo: GitHubRepo?, number: Int)
 
     public static let `default` = Spec.workTree(base: "HEAD")
 
@@ -17,6 +20,7 @@ public enum Spec: Equatable, Sendable {
         switch self {
         case .workTree(let base): "\(base) vs working tree"
         case .range(let base, let head, let mergeBase): base + (mergeBase ? "..." : "..") + head
+        case .pullRequest(let repo, let number): "\(repo?.label ?? "")#\(number)"
         }
     }
 }
@@ -52,6 +56,12 @@ public func parseArgs(_ args: [[UInt8]]) -> Result<Args, UsageError> {
             }
             rev = r
         }
+    }
+    if let r = rev, r.hasPrefix("#") || ["https://", "http://"].contains(where: r.lowercased().hasPrefix) {
+        guard let pr = pullRequest(r) else {
+            return .failure(UsageError(message: "griiy: not a GitHub pull request: '\(r)'\n\(usage)"))
+        }
+        return .success(Args(repo: repo ?? FilePath("."), spec: pr))
     }
     let side = { (s: Substring) in s.isEmpty ? "HEAD" : String(s) }
     let spec: Spec =

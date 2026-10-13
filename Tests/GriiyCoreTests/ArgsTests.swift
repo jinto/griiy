@@ -63,3 +63,37 @@ func usageErrors(args: [String]) {
     }
     #expect(e.message.contains("usage"))
 }
+
+@Test func pullRequests() throws {
+    let pr = { (o: String, r: String, n: Int) in Spec.pullRequest(repo: GitHubRepo(owner: o, name: r), number: n) }
+    for url in [
+        "https://github.com/o/r/pull/42", "https://github.com/o/r/pull/42/", "https://github.com/o/r/pull/42/files",
+        "https://github.com/o/r/pull/42/commits/abc123", "https://github.com/o/r/pull/42?w=1",
+        "https://github.com/o/r/pull/42#discussion_r1", "http://github.com/o/r/pull/42",
+        "https://www.github.com/o/r/pull/42", "HTTPS://GitHub.com/O/R/pull/42", "https://github.com/o/r.git/pull/42",
+        "https://github.com/o/r/pull/42/some-future-tab",
+    ] {
+        #expect(try spec([url]) == pr("o", "r", 42), "\(url)")
+    }
+    #expect(try spec(["https://github.com/o/.github/pull/1"]) == pr("o", ".github", 1))
+    #expect(try spec(["#42"]) == .pullRequest(repo: nil, number: 42))
+    let a = try p(["-C", "x", "#3"]).get()
+    #expect(a.repo == FilePath("x") && a.spec == .pullRequest(repo: nil, number: 3))
+    #expect(pr("O", "R", 4).label == "o/r#4" && Spec.pullRequest(repo: nil, number: 4).label == "#4")
+}
+
+@Test(arguments: [
+    "https://github.com/o/r/pull/", "https://github.com/o/r/pull/0", "https://github.com/o/r/pull/x",
+    "https://github.com/o/r/pull/4x", "https://github.com/o/r/pull/+4", "https://github.com/o/r/issues/3",
+    "https://github.com/o/r", "https://gitlab.com/o/r/pull/1", "https://github.com.evil.com/o/r/pull/1",
+    "https://user@github.com/o/r/pull/1", "https://github.com/o/../pull/1", "https://github.com/o/%2e%2e/pull/1",
+    "https://github.com/o/a%2Fb/pull/1", "https://github.com/o r/x/pull/1", "https://github.com//r/pull/1",
+    "https://github.com/o/r/pull/99999999999999999999", "#", "#0", "#1a", "#-1", "#+1", "# 1", "#99999999999999999999",
+])
+func badPullRequests(arg: String) {
+    guard case .failure(let e) = p([arg]) else {
+        Issue.record("\(arg) parsed")
+        return
+    }
+    #expect(e.message.hasPrefix("griiy: ") && e.message.contains("usage"), "\(arg): \(e.message)")
+}

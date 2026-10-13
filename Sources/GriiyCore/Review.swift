@@ -59,6 +59,9 @@ public struct Review: Sendable {
                 base = a
             }
             head = .sha(z)
+        case .pullRequest(let want, let number):
+            let (remote, _) = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), want, number: number)
+            throw .fetchFailed(remote: remote, detail: "fetching pull requests comes in M2-2")
         }
         // The tree's listing runs alongside the diff instead of after it. -z: names unquoted.
         let list =
@@ -130,6 +133,8 @@ extension Review {
         switch spec {
         case .workTree: reviewKey(.workTree(repo: repo))
         case .range(let base, let head, _): reviewKey(.range(repo: repo, base: base, head: head))
+        // open resolves `#n` to its repo (M2-2), so `repo` is never nil here.
+        case .pullRequest(let r, let n): reviewKey(.gitHub(owner: r?.owner ?? "", repo: r?.name ?? "", number: n))
         }
     }
 

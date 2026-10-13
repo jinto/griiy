@@ -9,6 +9,8 @@ public enum GitError: Error, Equatable, Sendable {
     case noCommits(path: String)
     case badRange(spec: String, detail: String)
     case fetchFailed(remote: String, detail: String)
+    /// No remote has the PR's repo (`want`), or for `#n` (`want` nil) no single GitHub repo to look in.
+    case noRemote(want: GitHubRepo?, number: Int, detail: String)
     case permissionDenied(path: String, detail: String)
     case git(detail: String)
     case cancelled
@@ -20,6 +22,8 @@ public enum GitError: Error, Equatable, Sendable {
         case .noCommits(let path): "\(path) has no commits yet"
         case .badRange(let spec, _): "Unknown revision or range: \(spec)"
         case .fetchFailed(let remote, _): "Could not fetch from \(remote)"
+        case .noRemote(let want?, _, _): "No remote for github.com/\(want.label)"
+        case .noRemote(nil, let n, _): "Can't tell which GitHub repository #\(n) is in"
         case .permissionDenied(let path, _): "Permission denied: \(path)"
         case .git: "git failed"
         case .cancelled: "Cancelled"
@@ -35,6 +39,10 @@ public enum GitError: Error, Equatable, Sendable {
         case .badRange:
             "Check the branch or commit names. Ranges look like main..feature or main...feature. To open another repository: griiy -C path/to/repo."
         case .fetchFailed: "Check your network and that the remote exists, then run griiy again."
+        case .noRemote(let want?, _, _):
+            "Add it as a remote (git remote add upstream https://github.com/\(want.label).git), or clone it: gh repo clone \(want.label)."
+        case .noRemote(nil, let n, _):
+            "Pass the pull request's URL instead: griiy https://github.com/<owner>/<repo>/pull/\(n)."
         case .permissionDenied:
             "Check file permissions, or for a private repository, that you are logged in (gh auth status)."
         case .git: "git reported the error above. Fix it and run griiy again."
@@ -44,7 +52,9 @@ public enum GitError: Error, Equatable, Sendable {
 
     public var detail: String {
         switch self {
-        case .badRange(_, let d), .fetchFailed(_, let d), .permissionDenied(_, let d), .git(let d): d
+        case .badRange(_, let d), .fetchFailed(_, let d), .noRemote(_, _, let d), .permissionDenied(_, let d),
+            .git(let d):
+            d
         default: ""
         }
     }

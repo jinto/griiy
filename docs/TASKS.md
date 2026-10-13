@@ -74,8 +74,9 @@
   - 결과 (2026-10-13): `v`가 커서의 파일(전체 보기면 그 파일)을 체크/해제하고 바로 `reviews/<key>.json`의 `"seen": {path: version}`에 저장한다. `version`은 양쪽 blob과 모드(+status, oldPath)라 head만 바뀌어도, base만 바뀌어도 그 파일의 변경이 같을 때만 유지된다(테스트, mutation으로 head blob만 비교하면 실패 확인). 트리와 파일 헤더에 ✓, 창 머리에 `· k seen`. 저장은 토글한 경로만 바꿔서 키를 공유하는 `a..b`/`a...b`가 서로의 체크를 지우지 않는다. 저장 파일을 못 읽으면 체크는 화면에만 남고 덮어쓰지 않는다. 트리에서 파일을 고르면 그 헤더 행을 선택한다(끝 쪽 파일에서 커서가 앞 파일이던 문제). docs/PLAN-M1-13.md
 
 ## M2 GitHub PR ⟵ M1-2
-- [ ] **M2-1 URL과 `#n` 해석, remote 대조 (F-PR-1)**
+- [x] **M2-1 URL과 `#n` 해석, remote 대조 (F-PR-1)**
   - ✓ 단위 테스트: https/ssh remote, 여러 remote, 일치 없음(에러 화면), fork PR
+  - 결과 (2026-10-13): `GriiyCore/GitHub.swift`. `https://github.com/o/r/pull/n[/…]`와 `'#n'`은 `Spec.pullRequest`가 되고, 잘못된 PR 인자는 범위로 넘기지 않고 사용법 에러다. owner·repo는 `GitHubRepo.init?` 한 곳에서 GitHub 이름 문자만 받고 소문자로 바꾼다(키, APFS의 ref 파일과 맞춤). `.github`처럼 ref 구성요소로 안 되는 이름은 M2-2가 인코딩한다. remote는 `git remote -v`의 fetch 줄(`insteadOf` 적용됨)에서 https·ssh·scp형 github.com URL을 읽고, 여럿이 맞으면 upstream → origin → 이름 순. `#n`은 GitHub 저장소가 하나면 그것, 여럿이면 upstream·origin만. 일치 없음은 `noRemote` 에러 화면이고 detail에는 URL 대신 `이름 → github.com/o/r`만 보인다(토큰 노출 방지). fetch는 M2-2라 지금은 고른 remote를 이름으로 `fetchFailed` 임시 화면에서 멈춘다. docs/PLAN-M2-1.md
 - [ ] **M2-2 fetch:** `refs/griiy/gh/<owner>/<repo>/<n>/{head,base}`, merge-base 계산
   - ✓ 실행 전후 `git for-each-ref refs/heads refs/remotes refs/tags` 동일 · 재fetch(force-push)도 정상 · 공개 저장소 PR 하나로 수동 확인
 - [ ] **M2-3 메타데이터와 코멘트:** `gh api`로 PR, 리뷰 코멘트, 이슈 코멘트, 연결 이슈

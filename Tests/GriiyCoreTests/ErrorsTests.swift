@@ -83,6 +83,8 @@ private func explained(_ e: GitError) -> Bool { !e.title.isEmpty && !e.hint.isEm
     for e: GitError in [
         .gitMissing, .notARepo(path: ""), .noCommits(path: ""), .badRange(spec: "", detail: ""),
         .fetchFailed(remote: "", detail: ""), .permissionDenied(path: "", detail: ""), .git(detail: ""), .cancelled,
+        .noRemote(want: nil, number: 1, detail: ""),
+        .noRemote(want: GitHubRepo(owner: "o", name: "r"), number: 1, detail: ""),
     ] {
         #expect(explained(e), "\(e)")
     }
