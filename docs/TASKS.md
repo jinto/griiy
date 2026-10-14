@@ -24,6 +24,7 @@
 - [ ] **M0-3 POC: 창 포커스와 키체인 (F-IN-4, F-PR-3)**
   - 배포 형태는 `.app` + CLI 심링크로 정했다 (Swift 전환, `scripts/bundle.sh --install`). 앱은 시작 시 `NSApp.activate()`로 앞에 나온다
   - 남은 확인: ① 심링크로 터미널에서 실행했을 때 창이 앞에 오고 키를 받는가 ② 재빌드·재서명 후 키체인 항목을 다시 묻지 않고 읽는가
+  - ②는 Developer ID 빌드로만 답할 수 있다: ad hoc 서명은 designated requirement가 cdhash라 빌드마다 키체인에 다른 앱이다(M4-2 계획 리뷰)
   - ✓ 결과를 `docs/POC-focus-keychain.md`에 기록한다 · 포커스 smoke test(실행 → 단축키 하나 입력 → 반응 확인)를 스크립트로 만든다
 - [x] ~~**M0-4 `griiy://` 프로토콜 (§7.3):**~~ Swift 전환으로 해당 없음 (WebView 경계가 없다). `app/<asset>`은 내장 자산, `api/<route>`는 JSON. 허용 목록 밖은 404. 파일은 ID로만 접근
   - ✓ 단위 테스트: `..`, URL 인코딩된 `%2e%2e`, NUL, 절대경로, 다른 ref, 비ASCII·공백 파일명(ID로는 정상) · MIME 타입 확인 · 프론트를 여러 파일로 나눠도 바이너리는 1개
@@ -112,6 +113,7 @@
   - ✓ fixture store로 집계 테스트
 - [ ] **M4-2 서명과 공증:** M0-3에서 정한 형태로 Developer ID 서명, notarytool, staple
   - ✓ 새 Mac 계정에서 다운로드 후 Gatekeeper 경고 없이 실행
+  - 결과 (2026-10-14, 진행 중): `scripts/bundle.sh`가 언제나 hardened runtime으로 서명한다(`GRIIY_SIGN`이 있으면 그 identity + timestamp, 없으면 ad hoc). `VERSION`이 plist 버전, `GRIIY_ARCHS`가 있으면 universal(`--show-bin-path`로 결과 경로). 새 `release.yml`(`v*` 태그, 수동 실행): 임시 키체인에 p12, identity는 SHA-1로 찾고 없으면 실패 → universal 빌드(`lipo -verify_arch`) → `codesign --verify --strict` → zip을 `notarytool submit --wait --timeout 30m --output-format json`(종료 코드와 `status: Accepted` 둘 다) → `stapler staple` → `spctl --assess` → `griiy-<ver>.zip` artifact. `contents: read`, `macos-26` 고정, p12·키체인은 `always()`로 지운다. 로컬: hardened runtime 번들이 git을 돌려 첫 페인트까지 간다(`GRIIY_MARK`), entitlements 없음. **남은 것(사용자):** griiy 저장소에 비밀 5개(codespark와 같은 값) → Actions에서 release 수동 실행 → artifact를 새 macOS 계정에서 브라우저로 받아 연다(두 번 푼다. 처음 여는 "인터넷에서 받은 앱" 확인은 정상, "확인할 수 없음"·악성 경고가 실패. CLT가 없으면 git 설치 안내가 뜨는데 Gatekeeper와 무관). 그 뒤 `[x]`. GitHub Release·cask는 M4-3. docs/PLAN-M4-2.md
 - [ ] **M4-3 배포:** GitHub Releases(universal `.app`), Homebrew cask
   - ✓ 두 경로 모두 깨끗한 환경에서 설치 확인
 - [ ] **M4-4 README 데모:** 스크린샷, GIF, 첫 실행 안내

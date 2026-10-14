@@ -1,0 +1,81 @@
+# Developer ID signed, notarized, stapled griiy.app as a zip artifact (M4-2). Publishing is M4-3.
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    # Pinned: with -warnings-as-errors a toolchain bump could break a tag that can't be re-cut.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Signing keychain
+        env:
+          CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "" "$kc"
+          echo "$CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" login.keychain-db
+          id=$(security find-identity -v -p codesigning "$kc" | awk '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$id" ]; then
+            # Without -v: also the identities whose chain didn't validate (names and hashes only).
+            security find-identity -p codesigning "$kc"
+            echo "::error::no valid Developer ID Application identity in the certificate"
+            exit 1
+          fi
+          echo "GRIIY_SIGN=$id" >> "$GITHUB_ENV"
+
+      - name: Build and sign (universal)
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v=${GITHUB_REF_NAME#v}; else v=0.0.$GITHUB_RUN_NUMBER; fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          VERSION=$v GRIIY_ARCHS="--arch arm64 --arch x86_64" scripts/bundle.sh
+          lipo .build/griiy.app/Contents/MacOS/griiy -verify_arch arm64 x86_64
+          codesign --verify --strict --verbose=2 .build/griiy.app
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent .build/griiy.app "$RUNNER_TEMP/submit.zip"
+          auth=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$TEAM_ID")
+          rc=0
+          out=$(xcrun notarytool submit "$RUNNER_TEMP/submit.zip" "${auth[@]}" --wait --timeout 30m --output-format json) || rc=$?
+          echo "$out"
+          status=$(echo "$out" | plutil -extract status raw - 2>/dev/null || true)
+          if [ "$rc" -ne 0 ] || [ "$status" != Accepted ]; then
+            sub=$(echo "$out" | plutil -extract id raw - 2>/dev/null || true)
+            [ -n "$sub" ] && xcrun notarytool log "$sub" "${auth[@]}" || true
+            echo "::error::notarization status: ${status:-none}"
+            exit 1
+          fi
+          # Right after Accepted, staple can fail (65) until the ticket propagates: re-run the job.
+          xcrun stapler staple .build/griiy.app
+          spctl --assess --type execute -vv .build/griiy.app
+          ditto -c -k --keepParent .build/griiy.app "griiy-$VERSION.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: griiy-${{ env.VERSION }}
+          path: griiy-${{ env.VERSION }}.zip
+          if-no-files-found: error
+
+      - name: Remove certificate and keychain
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true

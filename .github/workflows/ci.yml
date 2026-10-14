@@ -20,4 +20,4 @@ jobs:
       - run: scripts/bundle.sh
       - name: Binary size
         run: |
-          ls -l .build/release/griiy | awk '{ printf "binary: %.2f MB\n", $5 / 1048576 }' | tee -a "$GITHUB_STEP_SUMMARY"
+          ls -l .build/griiy.app/Contents/MacOS/griiy | awk '{ printf "binary: %.2f MB\n", $5 / 1048576 }' | tee -a "$GITHUB_STEP_SUMMARY"
