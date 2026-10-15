@@ -81,6 +81,7 @@ let shortcuts = """
     v        mark the file seen (or not)
     /  ⌘F    find: Return next, ⇧Return previous
     ⌘P       go to file
+    ⌘O       open another repository, in a new window
     c        line comments on this line
     ⌘I       PR panel (show or hide)
     Return   tree: show the file whole
@@ -282,19 +283,37 @@ final class App: NSObject, NSApplicationDelegate {
 
     /// Asks for a repository, again after each folder that isn't one; on Cancel, `e` as usual.
     private func choose(_ e: GitError) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.message = "Choose a git repository to review."
-        panel.prompt = "Open"
-        panel.beginSheetModal(for: window) { [self] response in
-            guard response == .OK, let url = panel.url else {
+        askForRepo { [self] url in
+            guard let url else {
                 showMessage(e.title, e.detail, e.hint)
                 phase = .error(e.title)
                 return
             }
             openRepo(FilePath(url.path))
         }
+    }
+
+    /// Another repository in a new window: griiy again with `-C`, as from a terminal. This window
+    /// holds one review; one that never loaded (an error on screen) gives way to the new one.
+    @objc func openRepository(_ sender: Any?) {
+        askForRepo { [self] url in
+            guard let url, let exe = Bundle.main.executableURL else { return }
+            do {
+                try Process.run(exe, arguments: ["-C", url.path])
+                if review == nil { NSApp.terminate(nil) }
+            } catch {
+                showMessage("Could not open a new window", error.localizedDescription, "")
+            }
+        }
+    }
+
+    private func askForRepo(_ done: @escaping (URL?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "Choose a git repository to review."
+        panel.prompt = "Open"
+        panel.beginSheetModal(for: window) { done($0 == .OK ? panel.url : nil) }
     }
 
     private func headerText(_ r: Review, total: Int?) -> NSAttributedString {
@@ -466,7 +485,9 @@ for warning in appDir().map({ loadConfig($0.appending("config.toml")).1 }) ?? []
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let appMenu = NSMenu()
+let fileMenu = NSMenu(title: "File")
 let editMenu = NSMenu(title: "Edit")
+fileMenu.addItem(withTitle: "Open…", action: #selector(App.openRepository(_:)), keyEquivalent: "o")
 appMenu.addItem(withTitle: "Quit griiy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
 editMenu.addItem(withTitle: "Find…", action: #selector(App.findInDiff(_:)), keyEquivalent: "f")
@@ -476,7 +497,7 @@ goMenu.addItem(withTitle: "PR Info", action: #selector(App.togglePanel(_:)), key
 let helpMenu = NSMenu(title: "Help")
 helpMenu.addItem(withTitle: "Keyboard Shortcuts", action: #selector(App.showShortcuts(_:)), keyEquivalent: "/")
 let menu = NSMenu()
-for sub in [appMenu, editMenu, goMenu, helpMenu] {
+for sub in [appMenu, fileMenu, editMenu, goMenu, helpMenu] {
     let item = NSMenuItem()
     item.submenu = sub
     menu.addItem(item)
