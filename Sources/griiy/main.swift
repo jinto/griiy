@@ -81,6 +81,7 @@ let shortcuts = """
     v        mark the file seen (or not)
     /  ⌘F    find: Return next, ⇧Return previous
     ⌘P       go to file
+    ⌘K       compare a branch, or open a pull request (new window)
     ⌘O       open another repository, in a new window
     c        line comments on this line
     ⌘I       PR panel (show or hide)
@@ -102,7 +103,9 @@ final class App: NSObject, NSApplicationDelegate {
     /// Drops a whole-file fetch the user has already moved on from (arrowing through the tree).
     private var opening = 0
     let tree = TreeController()
-    let goTo = GoToFile()
+    let goTo = FuzzyList("Go to file", truncating: .byTruncatingHead)
+    /// ⌘K (M4-6): a branch or an open PR, in a new window.
+    let compare = FuzzyList("Compare a branch, or open a pull request", truncating: .byTruncatingTail)
     let find = FindBar()
     let message = NSTextField(wrappingLabelWithString: "")
     /// The PR's title, text and comments (F-PR-4), right of the diff; hidden for a local range.
@@ -160,11 +163,12 @@ final class App: NSObject, NSApplicationDelegate {
         split.addArrangedSubview(panel.scroll)
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 2)
-        goTo.box.frame.origin = NSPoint(
-            x: (b.width - goTo.box.frame.width) / 2, y: b.height - 60 - goTo.box.frame.height)
-        goTo.box.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
-        for v in [header, line, split, goTo.box] { content.addSubview(v) }
-        goTo.focus = { [unowned self] in shown.table }
+        for p in [goTo, compare] {
+            p.box.frame.origin = NSPoint(x: (b.width - p.box.frame.width) / 2, y: b.height - 60 - p.box.frame.height)
+            p.box.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+            p.focus = { [unowned self] in shown.table }
+        }
+        for v in [header, line, split, goTo.box, compare.box] { content.addSubview(v) }
         goTo.onPick = { [unowned self] path in tree.reveal(path) }
         find.target = { [unowned self] in shown }
         tree.onPick = { [unowned self] f in
@@ -219,6 +223,52 @@ final class App: NSObject, NSApplicationDelegate {
     private var shown: DiffController { full.scroll.isHidden ? diff : full }
 
     @objc func goToFile(_ sender: Any?) { goTo.open(tree.paths) }
+
+    /// Lists the open GitHub PRs and the branches, compared with the default branch
+    /// (`base...branch`); picking one opens it in a new window.
+    @objc func compareWith(_ sender: Any?) {
+        guard let repo = review?.repo else { return }
+        compare.onPick = { _ in }
+        // A row, not the placeholder: changing that while the field is edited ends the editing.
+        compare.open(["Loading branches and pull requests…"])
+        let cancel = cancel
+        Thread.detachNewThread {
+            let refs = Result { () throws(GitError) in try branches(repo, cancel: cancel) }
+            // Branches are local and quick; the PRs wait on the network.
+            DispatchQueue.main.async { MainActor.assumeIsolated { self.listed(repo, refs, nil) } }
+            let prs = Result { () throws(GitError) in try openPullRequests(repo, cancel: cancel) }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self.listed(repo, refs, prs) } }
+        }
+    }
+
+    /// `prs` nil: still loading.
+    private func listed(
+        _ repo: FilePath, _ refs: Result<(names: [String], base: String?), GitError>, _ prs: Result<[OpenPR], GitError>?
+    ) {
+        var items: [(label: String, arg: String?)] = []
+        switch prs {
+        case .success(let prs)?:
+            items += prs.map { ("#\($0.number)  \($0.title) — \($0.author) · \($0.branch)", "#\($0.number)") }
+        // A row saying why there are none: gh missing or logged out names the fix.
+        case .failure(let e)?: items.append(("Pull requests: \(e.title)", nil))
+        case nil: items.append(("Loading pull requests…", nil))
+        }
+        switch refs {
+        case .success(let (names, base)):
+            let against = base ?? "HEAD"
+            let others = names.filter { $0 != base }
+            items.append((others.isEmpty ? "No other branches" : "Branches, compared with \(against):", nil))
+            items += others.map { ($0, "\(against)...\($0)") }
+        case .failure(let e): items.append(("Branches: \(e.title)", nil))
+        }
+        let args = Dictionary(items.map { ($0.label, $0.arg) }, uniquingKeysWith: { a, _ in a })
+        // ponytail: `repo.string` is lossy for a non-UTF-8 path (⌘O's url.path is too).
+        compare.onPick = { [unowned self] label in
+            if let arg = args[label] ?? nil { relaunch(["-C", repo.string, arg]) }
+        }
+        compare.reload(items.map(\.label))
+    }
+
     @objc func findInDiff(_ sender: Any?) { find.open() }
     @objc func togglePanel(_ sender: Any?) {
         guard review?.pr != nil else { return }
@@ -272,8 +322,7 @@ final class App: NSObject, NSApplicationDelegate {
             }
             header.attributedStringValue = headerText(r, total: nil)
             if r.files.isEmpty {
-                let hint = r.head == .workTree ? " To see the last commit: griiy HEAD~1..HEAD" : ""
-                showMessage("No changes." + hint, "", "", plain: true)
+                showMessage("No changes. ⌘K compares a branch or opens a pull request.", "", "", plain: true)
                 phase = .empty
             } else {
                 phase = .ready
@@ -293,17 +342,22 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Another repository in a new window: griiy again with `-C`, as from a terminal. This window
-    /// holds one review; one that never loaded (an error on screen) gives way to the new one.
+    /// Another repository in a new window.
     @objc func openRepository(_ sender: Any?) {
         askForRepo { [self] url in
-            guard let url, let exe = Bundle.main.executableURL else { return }
-            do {
-                try Process.run(exe, arguments: ["-C", url.path])
-                if review == nil { NSApp.terminate(nil) }
-            } catch {
-                showMessage("Could not open a new window", error.localizedDescription, "")
-            }
+            if let url { relaunch(["-C", url.path]) }
+        }
+    }
+
+    /// griiy again with `arguments`, as from a terminal: a new window. This window holds one
+    /// review; one with nothing on it (an error, no changes) gives way to the new one.
+    private func relaunch(_ arguments: [String]) {
+        guard let exe = Bundle.main.executableURL else { return }
+        do {
+            try Process.run(exe, arguments: arguments)
+            if review?.files.isEmpty != false { NSApp.terminate(nil) }
+        } catch {
+            showMessage("Could not open a new window", error.localizedDescription, "")
         }
     }
 
@@ -406,6 +460,8 @@ final class App: NSObject, NSApplicationDelegate {
             mark("\"git\":\(review?.gitMs ?? 0),\"rows\":0,\"files\":0,\"views\":0")
             mark("\"scroll\":null")
             fillTree()
+            // Nothing to review in a clean work tree, the usual Finder launch: offer what there is.
+            if review?.spec == .default && markPath == nil { compareWith(nil) }
         case .ready:
             guard diff.liveRowViews() > 0 else { return }
             mark(
@@ -463,6 +519,11 @@ final class App: NSObject, NSApplicationDelegate {
     }
 }
 
+// From Finder, PATH is /usr/bin:/bin:/usr/sbin:/sbin and gh is in Homebrew's bin. Appended, so
+// the git found before is still the one found; children (git's ssh and helpers) get it too.
+setenv(
+    "PATH", (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin", 1)
+
 // Usage errors go to the terminal before any window exists. Arguments as raw bytes: a repo path
 // need not be UTF-8.
 let rawArgs = (1..<Int(CommandLine.argc)).compactMap { i in
@@ -493,6 +554,7 @@ editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquiv
 editMenu.addItem(withTitle: "Find…", action: #selector(App.findInDiff(_:)), keyEquivalent: "f")
 let goMenu = NSMenu(title: "Go")
 goMenu.addItem(withTitle: "Go to File…", action: #selector(App.goToFile(_:)), keyEquivalent: "p")
+goMenu.addItem(withTitle: "Compare…", action: #selector(App.compareWith(_:)), keyEquivalent: "k")
 goMenu.addItem(withTitle: "PR Info", action: #selector(App.togglePanel(_:)), keyEquivalent: "i")
 let helpMenu = NSMenu(title: "Help")
 helpMenu.addItem(withTitle: "Keyboard Shortcuts", action: #selector(App.showShortcuts(_:)), keyEquivalent: "/")

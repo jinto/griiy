@@ -40,7 +40,7 @@ public enum GitError: Error, Equatable, Sendable {
         case .gitMissing:
             "Install git (xcode-select --install or brew install git) and make sure it is on PATH."
         case .ghMissing:
-            "griiy asks GitHub about pull requests through gh: brew install gh, then gh auth login. Installed already? Launch griiy from a terminal so it finds gh on PATH."
+            "griiy asks GitHub about pull requests through gh: brew install gh, then gh auth login."
         case .ghAuth:
             "griiy reads pull requests through gh, which isn't logged in to github.com: gh auth login. Logged in already? gh auth status shows what's wrong."
         case .notARepo: "Run griiy inside a git repository, or pass its path: griiy -C path/to/repo."
@@ -287,4 +287,29 @@ final class Background<T: Sendable>: @unchecked Sendable {
         done.wait()
         return try result.get()
     }
+}
+
+/// Branches for the ⌘K picker (M4-6), newest commit first, and the base to compare them with.
+public func branches(_ repo: FilePath, cancel: Cancel? = nil) throws(GitError) -> (names: [String], base: String?) {
+    let refs = ["for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes"]
+    let out = try git(repo, refs, cancel: cancel)
+    return parseBranches(
+        out, originHead: try? git(repo, ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], cancel: cancel))
+}
+
+/// Full ref names in, short names out, a remote's HEAD left out (`refname:short` would print
+/// it as the bare remote name). The base is what origin/HEAD points at, else main or master.
+// ponytail: a short name can be ambiguous (a tag, or a local branch named origin/x); git then
+// warns and picks one. Pass full ref names if that ever bites.
+func parseBranches(_ out: String, originHead: String?) -> (names: [String], base: String?) {
+    let names = out.split(separator: "\n").compactMap { ref -> String? in
+        if ref.hasPrefix("refs/remotes/") && ref.hasSuffix("/HEAD") { return nil }
+        return ["refs/heads/", "refs/remotes/"].first(where: ref.hasPrefix).map { String(ref.dropFirst($0.count)) }
+    }
+    let head = originHead?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let origin = head.flatMap { $0.hasPrefix("refs/remotes/") ? String($0.dropFirst(13)) : nil }
+    let base =
+        origin.flatMap { names.contains($0) ? $0 : nil }
+        ?? ["main", "master", "origin/main", "origin/master"].first(where: names.contains)
+    return (names, base)
 }

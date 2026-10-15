@@ -21,8 +21,8 @@ private func close(_ box: NSView, focus: NSView) {
     box.isHidden = true
 }
 
-/// ⌘P: fuzzy file names, the best 50; Return or a click picks one.
-final class GoToFile: NSObject, NSTextFieldDelegate, NSTableViewDataSource {
+/// A fuzzy list, the best 50; Return or a click picks one. ⌘P's file names, ⌘K's branches and PRs.
+final class FuzzyList: NSObject, NSTextFieldDelegate, NSTableViewDataSource {
     let box = overlay(NSRect(x: 0, y: 0, width: 560, height: 36 + 12 * 20))
     private let field = NSTextField()
     private let table = NSTableView()
@@ -32,15 +32,15 @@ final class GoToFile: NSObject, NSTextFieldDelegate, NSTableViewDataSource {
     var focus: () -> NSView = { NSView() }
     var onPick: (String) -> Void = { _ in }
 
-    override init() {
+    init(_ placeholder: String, truncating: NSLineBreakMode) {
         super.init()
         field.frame = NSRect(x: 8, y: box.frame.height - 32, width: box.frame.width - 16, height: 24)
-        field.placeholderString = "Go to file"
+        field.placeholderString = placeholder
         field.font = .systemFont(ofSize: 15)
         field.delegate = self
         let column = NSTableColumn(identifier: .init("path"))
         column.width = box.frame.width - 16
-        (column.dataCell as? NSTextFieldCell)?.lineBreakMode = .byTruncatingHead
+        (column.dataCell as? NSTextFieldCell)?.lineBreakMode = truncating
         table.addTableColumn(column)
         table.headerView = nil
         table.rowHeight = 18
@@ -61,6 +61,12 @@ final class GoToFile: NSObject, NSTextFieldDelegate, NSTableViewDataSource {
         update()
         box.isHidden = false
         box.window?.makeFirstResponder(field)
+    }
+
+    /// New items under what is typed already: a list that arrived after opening.
+    func reload(_ paths: [String]) {
+        self.paths = paths
+        update()
     }
 
     private func update() {

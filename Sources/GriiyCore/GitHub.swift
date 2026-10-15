@@ -377,3 +377,47 @@ private struct PR: Decodable {
                 || reviewThreads.all.contains { $0.comments.cut })
     }
 }
+
+// ---- Open PRs for the ⌘K picker (M4-6) ----
+
+public struct OpenPR: Equatable, Sendable {
+    public var number: Int
+    public var title, author, branch: String
+}
+
+/// The open PRs of the GitHub repo `#n` would use, newest first, at most 50; none without one.
+/// Blocking.
+public func openPullRequests(_ repo: FilePath, cancel: Cancel? = nil) throws(GitError) -> [OpenPR] {
+    let pr: GitHubRepo
+    do {
+        pr = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), nil, number: 0).repo
+    } catch .noRemote {
+        return []
+    }
+    let args = [
+        "pr", "list", "-R", "github.com/\(pr.label)", "--state", "open", "--limit", "50", "--json",
+        "number,title,author,headRefName",
+    ]
+    do {
+        let (status, out, err) = try spawn("gh", repo: nil, args, cancel: cancel)
+        return try decodeOpenPRs(status: status, out: out, err: err)
+    } catch .gitMissing {
+        throw .ghMissing
+    }
+}
+
+func decodeOpenPRs(status: Int32, out: [UInt8], err: [UInt8]) throws(GitError) -> [OpenPR] {
+    if isAuthFailure(status, err) { throw .ghAuth }
+    struct Row: Decodable {
+        var number: Int
+        var title, headRefName: String
+        var author: Login?
+    }
+    guard status == 0, let rows = try? JSONDecoder().decode([Row].self, from: Data(out)) else {
+        let why = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        throw .fetchFailed(remote: "GitHub", detail: why.isEmpty ? "unexpected answer from gh" : why)
+    }
+    return rows.map {
+        OpenPR(number: $0.number, title: $0.title, author: $0.author?.login ?? "ghost", branch: $0.headRefName)
+    }
+}

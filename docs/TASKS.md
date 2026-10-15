@@ -118,6 +118,9 @@
   - ✓ 두 경로 모두 깨끗한 환경에서 설치 확인
 - [ ] **M4-4 README 데모:** 스크린샷, GIF, 첫 실행 안내
 - [ ] **M4-5 외부 테스터 3명 설치 테스트 (PRD §9)**
+- [ ] **M4-6 비교 대상 고르기 (2026-10-15 사용자 요청):** 터미널 없이 브랜치·GitHub PR·Bitbucket PR을 연다. Finder로 연 깨끗한 작업 트리는 "No changes"에서 멈췄다
+  - ✓ 앱만으로(터미널 없이) 브랜치 비교, GitHub PR, Bitbucket PR을 열 수 있다
+  - 결과 (2026-10-15, 진행 중): ⌘K(Go → Compare…)가 열린 GitHub PR(`gh pr list`)과 브랜치(최근 커밋 순, `<기본 브랜치>...<브랜치>`)를 퍼지 목록으로 보이고, 고르면 griiy를 `-C <repo> <인자>`로 새 창에 띄운다(빈 창은 닫힌다). 인자 없이 연 작업 트리에 바뀐 파일이 없으면 첫 페인트 뒤 저절로 뜬다. Finder 실행의 PATH에 `/opt/homebrew/bin:/usr/local/bin`을 뒤에 붙여 gh를 찾는다. LaunchServices로 띄워 PR 목록(cli/cli)과 브랜치 고르기 → 새 창을 확인. **남은 것:** Bitbucket PR(M6-1 뒤). docs/PLAN-M6-1-M4-6.md
   - ✓ 3명 모두 5분 이내, 막힌 지점을 이슈로 기록
 - [ ] **M4-6 릴리스 노트:** PRD §8 측정값 표
 
