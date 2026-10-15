@@ -53,26 +53,45 @@ enum Secrets {
     }
 }
 
-/// Asks for the Atlassian email and API token in a sheet on `window`; `done` gets them, or nil on Cancel.
+/// Asks for the Atlassian email and API token in two sheets on `window`: getting a token (the
+/// browser), then pasting it. `done` gets them, or nil on Cancel.
 @MainActor
 func askBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) -> Void) {
-    let alert = NSAlert()
-    alert.messageText = "Connect griiy to Bitbucket with an API token"
-    alert.informativeText = """
-        1. Open the token page (button below) and choose Create API token with scopes → Bitbucket.
-        2. Give it the scopes read:pullrequest:bitbucket and read:repository:bitbucket, and copy the token.
-        3. Paste your Atlassian email and the token here. griiy keeps them in your keychain.
+    let start = NSAlert()
+    start.messageText = "Bitbucket needs an API token"
+    start.informativeText = """
+        griiy reads pull requests through Bitbucket's API, with a token from your Atlassian account.
+
+        In the browser, choose Create API token with scopes → Bitbucket, give it read:pullrequest:bitbucket and read:repository:bitbucket, and copy it.
         """
+    start.addButton(withTitle: "Create Token in Browser")
+    start.addButton(withTitle: "I Have a Token")
+    start.addButton(withTitle: "Cancel")
+    start.beginSheetModal(for: window) { response in
+        switch response {
+        case .alertFirstButtonReturn:
+            if let url = URL(string: "https://id.atlassian.com/manage-profile/security/api-tokens") {
+                NSWorkspace.shared.open(url)
+            }
+            pasteBitbucketToken(window, done)
+        case .alertSecondButtonReturn: pasteBitbucketToken(window, done)
+        default: done(nil)
+        }
+    }
+}
+
+@MainActor
+private func pasteBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) -> Void) {
+    let alert = NSAlert()
+    alert.messageText = "Paste your token"
+    alert.informativeText = "griiy keeps it in your keychain."
     let email = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
-    email.placeholderString = "3. Atlassian email"
+    email.placeholderString = "Atlassian email"
     email.stringValue = Secrets.bitbucket?.email ?? ""
     let token = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-    token.placeholderString = "3. API token"
-    let page = NSButton(
-        title: "1. Open the Token Page", target: TokenPage.shared, action: #selector(TokenPage.open))
-    page.frame = NSRect(x: 0, y: 60, width: 300, height: 28)
-    let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
-    for v in [page, email, token] { box.addSubview(v) }
+    token.placeholderString = "API token"
+    let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 54))
+    for v in [email, token] { box.addSubview(v) }
     alert.accessoryView = box
     alert.addButton(withTitle: "Save")
     alert.addButton(withTitle: "Cancel")
@@ -82,16 +101,5 @@ func askBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) ->
         let t = token.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard response == .alertFirstButtonReturn, !e.isEmpty, !t.isEmpty else { return done(nil) }
         done(BitbucketAuth(email: e, token: t))
-    }
-}
-
-/// The button's target: opens the page without closing the sheet.
-private final class TokenPage: NSObject {
-    static let shared = TokenPage()
-
-    @objc func open() {
-        if let url = URL(string: "https://id.atlassian.com/manage-profile/security/api-tokens") {
-            NSWorkspace.shared.open(url)
-        }
     }
 }
