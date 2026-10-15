@@ -57,16 +57,19 @@ enum Secrets {
 @MainActor
 func askBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) -> Void) {
     let alert = NSAlert()
-    alert.messageText = "Bitbucket API token"
-    alert.informativeText =
-        "Create an API token with scopes, choose Bitbucket, and give it read:pullrequest:bitbucket and read:repository:bitbucket. It is saved in your keychain."
+    alert.messageText = "Connect griiy to Bitbucket with an API token"
+    alert.informativeText = """
+        1. Open the token page (button below) and choose Create API token with scopes → Bitbucket.
+        2. Give it the scopes read:pullrequest:bitbucket and read:repository:bitbucket, and copy the token.
+        3. Paste your Atlassian email and the token here. griiy keeps them in your keychain.
+        """
     let email = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
-    email.placeholderString = "Atlassian email"
+    email.placeholderString = "3. Atlassian email"
     email.stringValue = Secrets.bitbucket?.email ?? ""
     let token = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-    token.placeholderString = "API token"
+    token.placeholderString = "3. API token"
     let page = NSButton(
-        title: "Create a token in the browser…", target: TokenPage.shared, action: #selector(TokenPage.open))
+        title: "1. Open the Token Page", target: TokenPage.shared, action: #selector(TokenPage.open))
     page.frame = NSRect(x: 0, y: 60, width: 300, height: 28)
     let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
     for v in [page, email, token] { box.addSubview(v) }
