@@ -1,4 +1,4 @@
-# Developer ID signed, notarized, stapled griiy.app as a zip artifact (M4-2). Publishing is M4-3.
+# Developer ID signed, notarized, stapled griiy.app as a zip (M4-2); a v* tag also publishes it as a GitHub Release.
 name: release
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # gh release create
 
 jobs:
   release:
@@ -73,6 +73,12 @@ jobs:
           name: griiy-${{ env.VERSION }}
           path: griiy-${{ env.VERSION }}.zip
           if-no-files-found: error
+
+      - name: GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "griiy-$VERSION.zip" --generate-notes
 
       - name: Remove certificate and keychain
         if: always()
