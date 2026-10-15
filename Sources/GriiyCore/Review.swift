@@ -24,7 +24,10 @@ public struct Review: Sendable {
     public var pr: PullRequest?
 
     /// Blocking: run it off the main thread. `cancel` stops the git running now and any after it.
-    public static func open(_ dir: FilePath, _ spec: Spec, cancel: Cancel? = nil) throws(GitError) -> Review {
+    /// `bitbucket` is only for a Bitbucket PR.
+    public static func open(_ dir: FilePath, _ spec: Spec, bitbucket: BitbucketAuth? = nil, cancel: Cancel? = nil)
+        throws(GitError) -> Review
+    {
         let start = Date()
         var top = try run("git", repo: dir, ["rev-parse", "--show-toplevel"], cancel: cancel)
         while top.last == UInt8(ascii: "\n") { top.removeLast() }
@@ -53,12 +56,19 @@ public struct Review: Sendable {
             base = mergeBase ? try GriiyCore.mergeBase(repo, a, z, label: spec.label, cancel: cancel) : a
             head = .sha(z)
         case .pullRequest(let want, let number):
-            let (remote, pr) = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), want, number: number)
-            let sha = try pullBase(pr, number, cancel: cancel)
-            // Seconds on a busy PR: it runs alongside the fetch and the diff.
-            info = Background { () throws(GitError) in try pullRequestInfo(pr, number, cancel: cancel) }
-            (spec, base, head) = try pullRequest(
-                repo, remote: remote, pr, number, base: sha, cancel: cancel)
+            let (remote, pr, url) = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), want, number: number)
+            let shas: (base: String, head: String)
+            if pr.host == .bitbucket {
+                let bb = try bitbucketPR(pr, number, auth: bitbucket, cancel: cancel)
+                info = Background { bb.info }
+                shas = try fetchBitbucketPR(repo, remote: remote, url: url, pr, number, bb, cancel: cancel)
+            } else {
+                let sha = try pullBase(pr, number, cancel: cancel)
+                // Seconds on a busy PR: it runs alongside the fetch and the diff.
+                info = Background { () throws(GitError) in try pullRequestInfo(pr, number, cancel: cancel) }
+                shas = try fetchPullRequest(repo, remote: remote, pr, number, base: sha, cancel: cancel)
+            }
+            (spec, base, head) = try pullRequest(repo, pr, number, shas, cancel: cancel)
         }
         // The tree's listing runs alongside the diff instead of after it. -z: names unquoted.
         let list =
@@ -72,13 +82,12 @@ public struct Review: Sendable {
             gitMs: Int(Date().timeIntervalSince(start) * 1000), pr: pr)
     }
 
-    /// PR `number` fetched, as a resolved spec and a three-dot diff like GitHub's "Files changed".
-    /// The spec names the repo even for `#n`, so the key and label are the PR URL's.
+    /// PR `number`'s fetched commits as a resolved spec and a three-dot diff, like the hosts' own
+    /// "Files changed". The spec names the repo even for `#n`, so the key and label are the PR URL's.
     static func pullRequest(
-        _ repo: FilePath, remote: String, _ pr: GitHubRepo, _ number: Int, base: String, cancel: Cancel?
+        _ repo: FilePath, _ pr: HostedRepo, _ number: Int, _ shas: (base: String, head: String), cancel: Cancel?
     ) throws(GitError) -> (Spec, String, Head) {
         let spec = Spec.pullRequest(repo: pr, number: number)
-        let shas = try fetchPullRequest(repo, remote: remote, pr, number, base: base, cancel: cancel)
         return (spec, try mergeBase(repo, shas.base, shas.head, label: spec.label, cancel: cancel), .sha(shas.head))
     }
 
@@ -159,6 +168,8 @@ extension Review {
         case .workTree: reviewKey(.workTree(repo: repo))
         case .range(let base, let head, _): reviewKey(.range(repo: repo, base: base, head: head))
         // open resolves `#n` to its repo, so `repo` is never nil here.
+        case .pullRequest(let r?, let n) where r.host == .bitbucket:
+            reviewKey(.bitbucket(workspace: r.owner, repo: r.name, number: n))
         case .pullRequest(let r, let n): reviewKey(.gitHub(owner: r?.owner ?? "", repo: r?.name ?? "", number: n))
         }
     }

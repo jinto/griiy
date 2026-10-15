@@ -135,6 +135,7 @@
 
 ## M6 Bitbucket Cloud와 Jira
 - [ ] **M6-1 Bitbucket PR (F-PR-2)** · ✓ 응답 fixture 테스트, fork 삭제·권한 없음·force-push 처리, 실제 PR 수동 확인
+  - 결과 (2026-10-15, 진행 중, M4-6과 함께 당겨 옴): `griiy https://bitbucket.org/<ws>/<repo>/pull-requests/<n>`과 `#n`(Bitbucket remote만 있을 때). API(Atlassian API token, Basic, api.bitbucket.org만, 리다이렉트 거부)로 브랜치와 커밋을 받고 브랜치 이름으로 fetch(`check-ref-format`). 열린 PR은 받은 tip, 닫힌 PR은 API 커밋으로 고정해 병합 뒤 지워진 브랜치도 보인다. fork는 remote의 transport로 URL을 만든다. 토큰은 환경변수 → 키체인(`griiy`/`bitbucket`), 없거나 401이면 시트(토큰 페이지 여는 버튼), 토큰이 있는데 403/404면 scope 안내. 자식 프로세스에는 토큰 환경변수를 지운다. ⌘K에 Bitbucket PR. fixture·로컬 bare remote·URLProtocol 테스트, 리다이렉트 거부·base 고정은 mutation으로 확인. **남은 것(사용자):** 실제 토큰으로 lxp_services_ai의 PR 열기. 브라우저 로그인(OAuth)은 결정 대기. docs/PLAN-M6-1-M4-6.md
 - [ ] **M6-2 Bitbucket 코멘트와 인용 ID `[bb-comment:id]`** · ✓ M2-4와 같은 악성 Markdown fixture 통과
 - [ ] **M6-3 Jira (F-AI-2 ④):** 설정된 프로젝트 키만 매칭, 키체인 `jira:<host>` · ✓ `UTF-8`, `SHA-256`, `ISO-8601`이 매칭되지 않는다 · 응답 fixture 테스트
 - [ ] **M6-4 `ticket` 모듈 경계:** Jira 하나만 구현하되 Linear 추가 시 바꿀 곳을 문서화 · ✓ CONTRIBUTING에 추가 방법 기재

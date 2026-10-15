@@ -1,15 +1,24 @@
-// GitHub PRs (F-PR-1): owner/repo from a PR URL or the remotes, and the remote to fetch from.
+// PRs (F-PR-1, F-PR-2): owner/repo from a PR URL or the remotes, and the remote to fetch from.
+// The rest of this file is GitHub's; Bitbucket.swift has Bitbucket's.
 import Foundation
 import System
 
-/// A github.com repository, lowercased: GitHub names ignore case, and so do the store key and
-/// macOS ref files. Only GitHub's own name characters get in, so no `/`, `%`, space or NUL. Names
-/// like `.github` still aren't valid ref components: `prRefs` encodes them.
-public struct GitHubRepo: Equatable, Sendable {
+public enum Host: String, Sendable {
+    case gitHub = "gh"
+    case bitbucket = "bb"
+
+    var site: String { self == .gitHub ? "github.com" : "bitbucket.org" }
+}
+
+/// A github.com or bitbucket.org repository, lowercased: both ignore case in names, and so do the
+/// store key and macOS ref files. Only the hosts' own name characters get in, so no `/`, `%`,
+/// space or NUL. Names like `.github` still aren't valid ref components: `prRefs` encodes them.
+public struct HostedRepo: Equatable, Hashable, Sendable {
+    public let host: Host
     public let owner: String
     public let name: String
 
-    public init?(owner: some StringProtocol, name: some StringProtocol) {
+    public init?(_ host: Host = .gitHub, owner: some StringProtocol, name: some StringProtocol) {
         func only(_ s: some StringProtocol, _ extra: String) -> Bool {
             !s.isEmpty
                 && s.utf8.allSatisfy {
@@ -17,9 +26,12 @@ public struct GitHubRepo: Equatable, Sendable {
                         || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) || extra.utf8.contains($0)
                 }
         }
-        // GitHub drops `.git` from names, so `r.git` in a URL is `r`.
+        // Both drop `.git` from names, so `r.git` in a URL is `r`. A Bitbucket workspace may hold `_`.
         let name = Substring(name.hasSuffix(".git") ? name.dropLast(4) : name[...])
-        guard only(owner, "-"), only(name, "-._"), name != ".", name != ".." else { return nil }
+        guard only(owner, host == .gitHub ? "-" : "-_"), only(name, "-._"), name != ".", name != ".." else {
+            return nil
+        }
+        self.host = host
         self.owner = owner.lowercased()
         self.name = name.lowercased()
     }
@@ -27,15 +39,22 @@ public struct GitHubRepo: Equatable, Sendable {
     var label: String { "\(owner)/\(name)" }
 }
 
-/// `https://github.com/<owner>/<repo>/pull/<n>[/…][?…][#…]` or `#<n>`; nil for anything else. Any
-/// path after the number is fine: GitHub's PR tabs (`/files`, `/commits/<sha>`, …) come and go.
+/// `https://github.com/<owner>/<repo>/pull/<n>[/…][?…][#…]`,
+/// `https://bitbucket.org/<workspace>/<repo>/pull-requests/<n>[/…]` or `#<n>`; nil for anything
+/// else. Any path after the number is fine: PR tabs (`/files`, `/diff`, …) come and go.
 func pullRequest(_ arg: String) -> Spec? {
     if arg.hasPrefix("#") { return number(arg.dropFirst()).map { .pullRequest(repo: nil, number: $0) } }
     guard let scheme = ["https://", "http://"].first(where: arg.lowercased().hasPrefix) else { return nil }
     let rest = arg.dropFirst(scheme.count).prefix { $0 != "?" && $0 != "#" }
     let parts = rest.split(separator: "/", omittingEmptySubsequences: false)
-    guard parts.count >= 5, ["github.com", "www.github.com"].contains(parts[0].lowercased()), parts[3] == "pull",
-        let repo = GitHubRepo(owner: parts[1], name: parts[2]), let n = number(parts[4])
+    let host: Host? =
+        switch parts.first?.lowercased() {
+        case "github.com", "www.github.com": .gitHub
+        case "bitbucket.org", "www.bitbucket.org": .bitbucket
+        default: nil
+        }
+    guard let host, parts.count >= 5, parts[3] == (host == .gitHub ? "pull" : "pull-requests"),
+        let repo = HostedRepo(host, owner: parts[1], name: parts[2]), let n = number(parts[4])
     else { return nil }
     return .pullRequest(repo: repo, number: n)
 }
@@ -47,13 +66,13 @@ private func number(_ s: Substring) -> Int? {
     return n
 }
 
-/// owner/repo of a github.com remote URL (`https://…`, `ssh://…`, `git@github.com:o/r.git`), nil
-/// for any other host or shape.
-func gitHubRepo(remoteURL url: String) -> GitHubRepo? {
+/// owner/repo of a github.com or bitbucket.org remote URL (`https://…`, `ssh://…`,
+/// `git@github.com:o/r.git`), nil for any other host or shape.
+func hostedRepo(remoteURL url: String) -> HostedRepo? {
     var host: Substring
     var path: Substring
     if let sep = url.range(of: "://") {
-        // Transports GitHub serves; anything else (ftp, a remote helper) isn't GitHub.
+        // Transports the hosts serve; anything else (ftp, a remote helper) isn't them.
         guard ["https", "http", "ssh", "git", "git+ssh", "ssh+git"].contains(url[..<sep.lowerBound].lowercased())
         else { return nil }
         let rest = url[sep.upperBound...]
@@ -67,45 +86,52 @@ func gitHubRepo(remoteURL url: String) -> GitHubRepo? {
         (host, path) = (url[..<colon], url[url.index(after: colon)...])
     }
     if let at = host.lastIndex(of: "@") { host = host[host.index(after: at)...] }
-    guard ["github.com", "www.github.com", "ssh.github.com"].contains(host.lowercased()) else { return nil }
+    let site: Host? =
+        switch host.lowercased() {
+        case "github.com", "www.github.com", "ssh.github.com": .gitHub
+        case "bitbucket.org", "www.bitbucket.org", "altssh.bitbucket.org": .bitbucket
+        default: nil
+        }
+    guard let site else { return nil }
     if path.hasPrefix("/") { path = path.dropFirst() }
     if path.hasSuffix("/") { path = path.dropLast() }
     let parts = path.split(separator: "/", omittingEmptySubsequences: false)
     guard parts.count == 2 else { return nil }
-    return GitHubRepo(owner: parts[0], name: parts[1])
+    return HostedRepo(site, owner: parts[0], name: parts[1])
 }
 
 /// The remote to fetch PR `number` from, given `git remote -v` output: one whose fetch URL is
-/// `want`, or for `#n` (`want == nil`) the only GitHub repo among the remotes. Several fit: upstream,
-/// then origin, then the first by name.
-func prRemote(_ remotes: String, _ want: GitHubRepo?, number: Int) throws(GitError) -> (
-    remote: String, repo: GitHubRepo
+/// `want`, or for `#n` (`want == nil`) the only hosted repo among the remotes. Several fit:
+/// upstream, then origin, then the first by name; a GitHub and a Bitbucket repo both fitting is
+/// a question only the PR's URL answers.
+func prRemote(_ remotes: String, _ want: HostedRepo?, number: Int) throws(GitError) -> (
+    remote: String, repo: HostedRepo, url: String
 ) {
     // `name<TAB>url (fetch)`. A remote with only a pushurl prints `name<TAB>`.
-    let all: [(remote: String, repo: GitHubRepo)] = remotes.split(separator: "\n").compactMap { line in
+    let all: [(remote: String, repo: HostedRepo, url: String)] = remotes.split(separator: "\n").compactMap { line in
         guard let tab = line.firstIndex(of: "\t"), line.hasSuffix(" (fetch)") else { return nil }
         let url = line[line.index(after: tab)...].dropLast(" (fetch)".count).trimmingCharacters(in: .whitespaces)
-        return gitHubRepo(remoteURL: url).map { (String(line[..<tab]), $0) }
+        return hostedRepo(remoteURL: url).map { (String(line[..<tab]), $0, url) }
     }
     var fits = all.filter { want == nil || $0.repo == want }
-    if want == nil && Set(fits.map(\.repo.label)).count > 1 {
+    if want == nil && Set(fits.map(\.repo)).count > 1 {
         fits = fits.filter { ["upstream", "origin"].contains($0.remote) }
     }
-    guard
+    guard want != nil || Set(fits.map(\.repo.host)).count < 2,
         let pick = fits.first(where: { $0.remote == "upstream" }) ?? fits.first(where: { $0.remote == "origin" })
             ?? fits.min(by: { $0.remote < $1.remote })
     else {
         // Names and owner/repo only: a remote URL can carry a token.
         throw .noRemote(
             want: want, number: number,
-            detail: all.map { "\($0.remote) → github.com/\($0.repo.label)" }.joined(separator: "\n"))
+            detail: all.map { "\($0.remote) → \($0.repo.host.site)/\($0.repo.label)" }.joined(separator: "\n"))
     }
     return pick
 }
 
 /// Where PR `number`'s `head` and `base` are fetched to (F-PR-1). Bytes outside `[a-z0-9_-]` become
 /// `%XX`, so names that aren't valid ref components (`.github`, `a..b`, `x.lock`) still make refs.
-func prRefs(_ pr: GitHubRepo, _ number: Int) -> String {
+func prRefs(_ pr: HostedRepo, _ number: Int) -> String {
     func ref(_ s: String) -> String {
         s.utf8.map { b in
             (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(b) || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(b)
@@ -113,13 +139,13 @@ func prRefs(_ pr: GitHubRepo, _ number: Int) -> String {
                 ? String(UnicodeScalar(b)) : String(format: "%%%02X", b)
         }.joined()
     }
-    return "refs/griiy/gh/\(ref(pr.owner))/\(ref(pr.name))/\(number)"
+    return "refs/griiy/\(pr.host.rawValue)/\(ref(pr.owner))/\(ref(pr.name))/\(number)"
 }
 
 /// The PR's base commit as GitHub last synced it, kept as it was once closed or merged (closed PRs
 /// have no `refs/pull/<n>/merge` to find it from). Blocking. The REST call, not `pullRequestInfo`:
 /// that one takes seconds on a busy PR, so it runs alongside the fetch instead of before it.
-func pullBase(_ pr: GitHubRepo, _ number: Int, cancel: Cancel?) throws(GitError) -> String {
+func pullBase(_ pr: HostedRepo, _ number: Int, cancel: Cancel?) throws(GitError) -> String {
     // --hostname: GH_HOST could point gh at another server.
     let args = ["api", "--hostname", "github.com", "repos/\(pr.label)/pulls/\(number)", "--jq", ".base.sha"]
     let (status, out, err): (Int32, [UInt8], [UInt8])
@@ -156,27 +182,32 @@ func baseSha(_ out: String) -> String? {
 // ponytail: two windows opening the same PR while it is force-pushed can read each other's refs;
 // both are real PR commits. Fetch into per-run refs if that ever matters.
 func fetchPullRequest(
-    _ repo: FilePath, remote: String, _ pr: GitHubRepo, _ number: Int, base: String, cancel: Cancel? = nil
+    _ repo: FilePath, remote: String, _ pr: HostedRepo, _ number: Int, base: String, cancel: Cancel? = nil
 )
     throws(GitError) -> (base: String, head: String)
 {
     let ns = prRefs(pr, number)
-    let args = [
-        "-c", "fetch.writeCommitGraph=false", "fetch", "--no-tags", "--quiet", "--refmap=", "--no-write-fetch-head",
-        "--no-recurse-submodules", "--no-auto-maintenance", "--end-of-options", remote,
-        "+refs/pull/\(number)/head:\(ns)/head", "+\(base):\(ns)/base",
-    ]
+    try fetchRefs(repo, from: remote, ["+refs/pull/\(number)/head:\(ns)/head", "+\(base):\(ns)/base"], cancel: cancel)
+    let shas = try git(repo, ["rev-parse", "\(ns)/base^{commit}", "\(ns)/head^{commit}"], cancel: cancel)
+        .split(separator: "\n").map(String.init)
+    guard shas.count == 2 else { throw .git(detail: "can't read \(ns)") }
+    return (shas[0], shas[1])
+}
+
+/// `git fetch <from> <refspecs>` into refs/griiy and nowhere else (see `fetchPullRequest`).
+func fetchRefs(_ repo: FilePath, from: String, _ refspecs: [String], cancel: Cancel?) throws(GitError) {
+    let args =
+        [
+            "-c", "fetch.writeCommitGraph=false", "fetch", "--no-tags", "--quiet", "--refmap=", "--no-write-fetch-head",
+            "--no-recurse-submodules", "--no-auto-maintenance", "--end-of-options", from,
+        ] + refspecs
     // Not `run`: its stderr reading would call ssh's "Permission denied" the checkout's fault.
     let (status, _, err) = try spawn("git", repo: repo, args, cancel: cancel)
     guard status == 0 else {
         let why = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         // git leaves tokens in remote URLs out of its messages (tested). --quiet can leave it empty.
-        throw .fetchFailed(remote: remote, detail: why.isEmpty ? "git fetch exited with \(status)" : why)
+        throw .fetchFailed(remote: from, detail: why.isEmpty ? "git fetch exited with \(status)" : why)
     }
-    let shas = try git(repo, ["rev-parse", "\(ns)/base^{commit}", "\(ns)/head^{commit}"], cancel: cancel)
-        .split(separator: "\n").map(String.init)
-    guard shas.count == 2 else { throw .git(detail: "can't read \(ns)") }
-    return (shas[0], shas[1])
 }
 
 // ---- The PR as GitHub has it (F-PR-4, F-AI-2 ③): one GraphQL query ----
@@ -251,7 +282,7 @@ private let prQuery = """
 
 /// PR `number`'s title, body, comments, line comments and linked issues. Blocking; seconds on a busy PR.
 // ponytail: no paging past 100 per list; `truncated` says so. Page with `after:` if it matters.
-func pullRequestInfo(_ pr: GitHubRepo, _ number: Int, cancel: Cancel?) throws(GitError) -> PullRequest {
+func pullRequestInfo(_ pr: HostedRepo, _ number: Int, cancel: Cancel?) throws(GitError) -> PullRequest {
     // -f: owner and name stay strings (-F would make `123` a number and read `@x` from a file).
     let args = [
         "api", "graphql", "--hostname", "github.com", "-f", "owner=\(pr.owner)", "-f", "name=\(pr.name)", "-F",
@@ -385,15 +416,18 @@ public struct OpenPR: Equatable, Sendable {
     public var title, author, branch: String
 }
 
-/// The open PRs of the GitHub repo `#n` would use, newest first, at most 50; none without one.
-/// Blocking.
-public func openPullRequests(_ repo: FilePath, cancel: Cancel? = nil) throws(GitError) -> [OpenPR] {
-    let pr: GitHubRepo
+/// The open PRs of the repo `#n` would use, GitHub's or Bitbucket's, newest first, at most 50;
+/// none without one. Blocking.
+public func openPullRequests(_ repo: FilePath, bitbucket: BitbucketAuth? = nil, cancel: Cancel? = nil)
+    throws(GitError) -> [OpenPR]
+{
+    let pr: HostedRepo
     do {
         pr = try prRemote(git(repo, ["remote", "-v"], cancel: cancel), nil, number: 0).repo
     } catch .noRemote {
         return []
     }
+    if pr.host == .bitbucket { return try bitbucketOpenPRs(pr, auth: bitbucket, cancel: cancel) }
     let args = [
         "pr", "list", "-R", "github.com/\(pr.label)", "--state", "open", "--limit", "50", "--json",
         "number,title,author,headRefName",

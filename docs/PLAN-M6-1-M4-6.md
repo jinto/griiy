@@ -130,3 +130,22 @@ fable은 사용 한도에 걸려 같은 요청을 opus가 맡았다. 위 설계�
 
 ## ponytail-review 반영
 - 줄일 곳 없음
+
+## 구현 (M6-1)
+- `GitHubRepo` → `HostedRepo(host:owner:name:)`. `Host.gitHub/.bitbucket`, ref는 `refs/griiy/<gh|bb>/…`, 키 `bb-<ws>-<repo>-<n>`. `prRemote`가 URL도 돌려준다(fork의 transport)
+- `Bitbucket.swift`: `bitbucketGet`(`askApi` 모양), `bitbucketFailure`(R5), `decodeBitbucketPR`, `fetchBitbucketPR`, `forkURL`, `bitbucketOpenPRs`. 공용 fetch 옵션은 `fetchRefs`로 뽑아 GitHub도 쓴다
+- 앱: `Keychain.swift`(`Secrets`, 토큰 시트, "Create a token in the browser…" 버튼). `.bitbucketAuth`면 시트 → 저장 → 같은 프로세스에서 다시 연다(`choose()`와 같은 길). ⌘K에서 토큰 줄을 고르면 시트
+- 사용자 질문(2026-10-15): 브라우저 로그인은? → Bitbucket OAuth는 workspace에 consumer 등록, PKCE 없음(secret이 앱에 들어간다), `griiy://` 콜백, 2시간 토큰 갱신이 필요하다. 지금은 토큰 페이지를 여는 버튼만. 사용자가 원하면 다음에
+
+## 구현 리뷰 (codex + opus) 반영
+- codex 1, opus 2: `merge_commit`을 읽어 브랜치가 지워진 닫힌 PR 안내에 `griiy <merge>^1..<merge>` (squash 병합은 source 커밋이 대상에 없다)
+- codex 2, opus 6, 8: fork URL을 `forkURL`로 뽑고 altssh(443)도 그대로, 테스트
+- opus 3 (R1 수정): **열린 PR의 base는 받은 대상 브랜치 tip.** API의 destination hash가 오래됐고 PR 브랜치에 main을 merge했으면 merge-base(오래된 base, head)가 main의 커밋을 diff에 넣는다. 고정은 닫힌 PR만
+- opus 4: 환경변수 토큰이 틀렸으면 시트 대신 오류 화면(시트에 넣은 값은 쓰이지 않는다)
+- opus 1: `fetchFailed` 안내에 Bitbucket(ssh 키)도
+- opus 7: 닫힌 PR에서 source fetch 실패를 삼키는 이유를 주석으로. opus 5: 메모리에만 남은 토큰은 ⌘K로 띄운 새 프로세스가 모른다 → `ponytail:`
+- opus 9: 쓰지 않는 `BitbucketAuth: Equatable` 삭제
+- 받지 않음: 12자만 받기(codex 3: 모호한 짧은 hash는 `rev-parse --verify`가 거부해 받은 tip으로 간다), `Cancel` hook 해제(codex 4: `askApi`와 같다. 창이 닫힐 때까지 끝난 task 몇 개), 공유 `JSONDecoder`(codex 5: Swift 6에서 Sendable로 컴파일되고 `AI.swift`도 같다), 키체인 update에 접근성(codex 6, opus 5: 파일 키체인이라 실효가 없다), HTTP 상태 매핑을 URLProtocol로 한 번 더(opus 8: `bitbucketFailure` 단위 테스트가 같은 함수), `setenv` 테스트의 병렬 위험(opus 8: 다른 테스트는 `BITBUCKET_*`를 읽지 않는다)
+
+## ponytail-review 반영
+- 줄일 곳 없음(`fetchRefs`로 GitHub와 fetch 옵션을 나눠 쓴 것이 이미 줄인 것)

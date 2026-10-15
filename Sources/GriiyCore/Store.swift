@@ -8,6 +8,7 @@ public let storeVersion = 1
 
 public enum Source: Sendable {
     case gitHub(owner: String, repo: String, number: Int)
+    case bitbucket(workspace: String, repo: String, number: Int)
     /// Ref names, not shas, so the key survives new commits. `repo` is the worktree top level.
     case range(repo: FilePath, base: String, head: String)
     case workTree(repo: FilePath)
@@ -19,6 +20,8 @@ public func reviewKey(_ s: Source) -> String {
         // GitHub names are case-insensitive, and so is the macOS file system.
         case .gitHub(let owner, let repo, let number):
             "gh-\(enc(owner.lowercased()))-\(enc(repo.lowercased()))-\(number)"
+        case .bitbucket(let workspace, let repo, let number):
+            "bb-\(enc(workspace.lowercased()))-\(enc(repo.lowercased()))-\(number)"
         case .range(let repo, let base, let head): "local-\(repoHash(repo))-\(enc(base))-\(enc(head))"
         case .workTree(let repo): "local-\(repoHash(repo))-worktree"
         }

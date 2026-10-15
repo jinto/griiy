@@ -8,12 +8,14 @@ public enum GitError: Error, Equatable, Sendable {
     case ghMissing
     /// gh is there but not logged in, or its token no longer works.
     case ghAuth
+    /// Bitbucket's API wants an Atlassian API token: none is saved, or it was refused (401).
+    case bitbucketAuth
     case notARepo(path: String)
     case noCommits(path: String)
     case badRange(spec: String, detail: String)
     case fetchFailed(remote: String, detail: String)
     /// No remote has the PR's repo (`want`), or for `#n` (`want` nil) no single GitHub repo to look in.
-    case noRemote(want: GitHubRepo?, number: Int, detail: String)
+    case noRemote(want: HostedRepo?, number: Int, detail: String)
     case permissionDenied(path: String, detail: String)
     case git(detail: String)
     case cancelled
@@ -23,12 +25,13 @@ public enum GitError: Error, Equatable, Sendable {
         case .gitMissing: "git is not installed"
         case .ghMissing: "The GitHub CLI (gh) is not installed"
         case .ghAuth: "Log in to the GitHub CLI"
+        case .bitbucketAuth: "Bitbucket needs an API token"
         case .notARepo(let path): "\(path) is not a git repository"
         case .noCommits(let path): "\(path) has no commits yet"
         case .badRange(let spec, _): "Unknown revision or range: \(spec)"
         case .fetchFailed(let remote, _): "Could not fetch from \(remote)"
-        case .noRemote(let want?, _, _): "No remote for github.com/\(want.label)"
-        case .noRemote(nil, let n, _): "Can't tell which GitHub repository #\(n) is in"
+        case .noRemote(let want?, _, _): "No remote for \(want.host.site)/\(want.label)"
+        case .noRemote(nil, let n, _): "Can't tell which repository #\(n) is in"
         case .permissionDenied(let path, _): "Permission denied: \(path)"
         case .git: "git failed"
         case .cancelled: "Cancelled"
@@ -48,11 +51,13 @@ public enum GitError: Error, Equatable, Sendable {
         case .badRange:
             "Check the branch or commit names. Ranges look like main..feature or main...feature. To open another repository: griiy -C path/to/repo."
         case .fetchFailed:
-            "Check your network and that the remote exists. For a private repository, log in (gh auth login) and let git use it (gh auth setup-git)."
+            "Check your network and that the remote exists. For a private repository, let git read it: on GitHub log in (gh auth login) and let git use it (gh auth setup-git); on Bitbucket add your ssh key at bitbucket.org."
         case .noRemote(let want?, _, _):
-            "Add it as a remote (git remote add upstream https://github.com/\(want.label).git), or clone it: gh repo clone \(want.label)."
+            "Add it as a remote (git remote add upstream https://\(want.host.site)/\(want.label).git), or clone it."
         case .noRemote(nil, let n, _):
-            "Pass the pull request's URL instead: griiy https://github.com/<owner>/<repo>/pull/\(n)."
+            "Pass the pull request's URL instead: griiy https://github.com/<owner>/<repo>/pull/\(n), or griiy https://bitbucket.org/<workspace>/<repo>/pull-requests/\(n)."
+        case .bitbucketAuth:
+            "Create an Atlassian API token with the scopes read:pullrequest:bitbucket and read:repository:bitbucket at id.atlassian.com, then enter it with your Atlassian email."
         case .permissionDenied:
             "Check file permissions, or for a private repository, that you are logged in (gh auth status)."
         case .git: "git reported the error above. Fix it and run griiy again."
@@ -197,6 +202,9 @@ func spawn(
     env["NO_COLOR"] = "1"
     // claude: no memory folder under ~/.claude/projects for the folder it runs in.
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    // The Bitbucket token from the environment is griiy's alone (F-PR-3).
+    env["BITBUCKET_API_TOKEN"] = nil
+    env["BITBUCKET_EMAIL"] = nil
     var envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0)=\($1)") } + [nil]
     defer { for p in argv + envp { free(p) } }
 

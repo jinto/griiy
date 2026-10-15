@@ -5,7 +5,7 @@ import Testing
 
 @testable import GriiyCore
 
-private func gh(_ owner: String, _ name: String) -> GitHubRepo { GitHubRepo(owner: owner, name: name)! }
+private func gh(_ owner: String, _ name: String) -> HostedRepo { HostedRepo(owner: owner, name: name)! }
 
 /// `git remote -v` output: fetch and push lines per remote, sorted by name like git's.
 private func remotes(_ pairs: [(String, String)]) -> String {
@@ -16,13 +16,13 @@ private func remotes(_ pairs: [(String, String)]) -> String {
     #expect(gh("Octo-Cat", "Hello.World_2") == gh("octo-cat", "hello.world_2"))
     #expect(gh("Octo", "R").owner == "octo" && gh("Octo", "R").name == "r")
     // Valid GitHub names that aren't valid ref components: M2-2 encodes them, parsing keeps them.
-    #expect(GitHubRepo(owner: "o", name: ".github") != nil)
-    #expect(GitHubRepo(owner: "o", name: "a..b") != nil)
+    #expect(HostedRepo(owner: "o", name: ".github") != nil)
+    #expect(HostedRepo(owner: "o", name: "a..b") != nil)
     for (owner, name) in [
         ("", "r"), ("o", ""), ("o", "."), ("o", ".."), ("o.x", "r"), ("o_x", "r"), ("o", "a/b"), ("o", "a b"),
         ("o", "%2e%2e"), ("o", "r\0"), ("o", "r\n"), ("오", "r"), ("o", "-r?"),
     ] {
-        #expect(GitHubRepo(owner: owner, name: name) == nil, "\(owner)/\(name)")
+        #expect(HostedRepo(owner: owner, name: name) == nil, "\(owner)/\(name)")
     }
 }
 
@@ -35,7 +35,7 @@ private func remotes(_ pairs: [(String, String)]) -> String {
         "git@github.com:o/r.git", "git@github.com:o/r", "https://user:tok@github.com:443/o/r.git",
         "ssh://user:pw@github.com:22/o/r.git", "SSH://git@github.com/o/r", "github.com:o/r", "git@github.com:/o/r.git",
     ] {
-        #expect(gitHubRepo(remoteURL: url) == gh("o", "r"), "\(url)")
+        #expect(hostedRepo(remoteURL: url) == gh("o", "r"), "\(url)")
     }
     for url in [
         "https://gitlab.com/o/r.git", "https://github.com.evil.com/o/r", "https://evilgithub.com/o/r",
@@ -43,11 +43,11 @@ private func remotes(_ pairs: [(String, String)]) -> String {
         "/srv/git/o/r.git", "../r", "file:///github.com/o/r", "git@gitlab.com:o/r.git", "https://github.com/o/%2e%2e",
         "github-work:o/r", "", "ftp://github.com/o/r", "foo://github.com/o/r", "persistent-https://github.com/o/r",
     ] {
-        #expect(gitHubRepo(remoteURL: url) == nil, "\(url)")
+        #expect(hostedRepo(remoteURL: url) == nil, "\(url)")
     }
 }
 
-private func pick(_ out: String, _ want: GitHubRepo?, _ n: Int = 7) throws(GitError) -> String {
+private func pick(_ out: String, _ want: HostedRepo?, _ n: Int = 7) throws(GitError) -> String {
     try prRemote(out, want, number: n).remote
 }
 
@@ -84,7 +84,7 @@ private func pick(_ out: String, _ want: GitHubRepo?, _ n: Int = 7) throws(GitEr
 
 @Test func noRemote() {
     let token = "https://ghp_secret@github.com/me/r.git"
-    let cases: [(String, GitHubRepo?)] = [
+    let cases: [(String, HostedRepo?)] = [
         ("", gh("o", "r")),
         (remotes([("origin", token)]), gh("o", "r")),
         ("", nil),
@@ -226,7 +226,8 @@ private func prRepos() -> (remote: TempDir, local: TempDir, base: String) {
     let dir = FilePath(local.path)
     let tip = git(local.path, ["rev-parse", "main"]).trimmingCharacters(in: .whitespacesAndNewlines)
     // What open does after gh answers, for a URL and for `#n` alike: both arrive with the repo.
-    let (spec, b, head) = try Review.pullRequest(dir, remote: "origin", gh("O", "R"), 1, base: tip, cancel: nil)
+    let shas = try fetchPullRequest(dir, remote: "origin", gh("O", "R"), 1, base: tip)
+    let (spec, b, head) = try Review.pullRequest(dir, gh("O", "R"), 1, shas, cancel: nil)
     #expect(spec == .pullRequest(repo: gh("o", "r"), number: 1))
     #expect(spec.label == "o/r#1")
     #expect(b == base)

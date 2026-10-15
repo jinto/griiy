@@ -65,7 +65,7 @@ func usageErrors(args: [String]) {
 }
 
 @Test func pullRequests() throws {
-    let pr = { (o: String, r: String, n: Int) in Spec.pullRequest(repo: GitHubRepo(owner: o, name: r), number: n) }
+    let pr = { (o: String, r: String, n: Int) in Spec.pullRequest(repo: HostedRepo(owner: o, name: r), number: n) }
     for url in [
         "https://github.com/o/r/pull/42", "https://github.com/o/r/pull/42/", "https://github.com/o/r/pull/42/files",
         "https://github.com/o/r/pull/42/commits/abc123", "https://github.com/o/r/pull/42?w=1",

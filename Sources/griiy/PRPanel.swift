@@ -150,7 +150,7 @@ func panelText(_ pr: PullRequest, label: String, images: inout [URL]) -> NSAttri
 
     add(pr.title + "\n", [.font: NSFont.boldSystemFont(ofSize: 17), .foregroundColor: Palette.fg])
     add("\(label) · \(pr.author) · \(pr.state.lowercased()) · ", muted(small))
-    link("on GitHub", URL(string: pr.url))
+    link(pr.url.hasPrefix("https://bitbucket.org/") ? "on Bitbucket" : "on GitHub", URL(string: pr.url))
     add("\n\n", [.font: body])
     md(pr.body)
     if !pr.issues.isEmpty {

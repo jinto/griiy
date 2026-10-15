@@ -11,7 +11,7 @@ public enum Spec: Equatable, Sendable {
     /// An empty side is HEAD.
     case range(base: String, head: String, mergeBase: Bool)
     /// `griiy <PR URL>`, or `griiy '#n'` with `repo` nil: the remotes decide which repo.
-    case pullRequest(repo: GitHubRepo?, number: Int)
+    case pullRequest(repo: HostedRepo?, number: Int)
 
     public static let `default` = Spec.workTree(base: "HEAD")
 

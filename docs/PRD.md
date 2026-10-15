@@ -51,7 +51,7 @@
 |---|---|
 | F-PR-1 | **GitHub (v0.1):** `gh` 인증을 재사용한다. URL의 owner/repo를 `git remote -v`와 대조해 remote를 고른다. 일치하는 remote가 없으면 F-IN-5 화면으로 clone 경로를 안내한다. 명시적 refspec으로 fetch한다: `refs/pull/<n>/head:refs/griiy/gh/<owner>/<repo>/<n>/head`, base 브랜치는 `refs/griiy/gh/<owner>/<repo>/<n>/base`. fork PR도 `refs/pull/<n>/head`로 받는다 |
 | F-PR-2 | **Bitbucket Cloud (v0.2):** API 2.0으로 source/destination의 저장소 URL과 커밋 SHA를 확정한 뒤 SHA를 `refs/griiy/bb/...`로 fetch한다. fork 삭제, 권한 없음, force-push는 F-IN-5로 처리한다 |
-| F-PR-3 | **비밀값:** 우선순위는 환경변수 → 키체인. 키체인 항목은 service=`griiy`, account=`github` / `bitbucket:<workspace>` / `jira:<host>` / `anthropic`. 입력은 마스킹하고, 설정 화면에서 교체·삭제할 수 있다. 키체인 접근이 거부되면 이번 실행에서만 메모리에 보관하고 그 사실을 알린다. 로그와 화면, AI 프롬프트에 비밀값을 넣지 않는다 |
+| F-PR-3 | **비밀값:** 우선순위는 환경변수 → 키체인. 키체인 항목은 service=`griiy`, account=`github` / `bitbucket`(Atlassian API token은 사람 단위라 하나, 값은 `email\ntoken`) / `jira:<host>` / `anthropic`. 입력은 마스킹하고, 설정 화면에서 교체·삭제할 수 있다. 키체인 접근이 거부되면 이번 실행에서만 메모리에 보관하고 그 사실을 알린다. 로그와 화면, AI 프롬프트에 비밀값을 넣지 않는다 |
 | F-PR-4 | PR 패널: 제목, 작성자, 본문, 리뷰 코멘트. 줄 코멘트는 해당 줄 옆에 표시한다 (읽기 전용) |
 | F-PR-5 | **PR Markdown 안전 렌더:** 원본 HTML 태그는 이스케이프한다. 링크는 `https:`와 `mailto:`만 허용하고 외부 브라우저로 연다. 외부 이미지는 기본적으로 차단하고 "이미지 보기"를 눌러야 불러온다. iframe과 이벤트 핸들러는 생성하지 않는다 |
 | F-PR-6 | griiy는 `refs/griiy/*` fetch 외에는 저장소에 아무것도 쓰지 않는다 |

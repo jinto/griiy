@@ -228,6 +228,7 @@ final class App: NSObject, NSApplicationDelegate {
     /// (`base...branch`); picking one opens it in a new window.
     @objc func compareWith(_ sender: Any?) {
         guard let repo = review?.repo else { return }
+        let auth = Secrets.bitbucket
         compare.onPick = { _ in }
         // A row, not the placeholder: changing that while the field is edited ends the editing.
         compare.open(["Loading branches and pull requests…"])
@@ -236,7 +237,7 @@ final class App: NSObject, NSApplicationDelegate {
             let refs = Result { () throws(GitError) in try branches(repo, cancel: cancel) }
             // Branches are local and quick; the PRs wait on the network.
             DispatchQueue.main.async { MainActor.assumeIsolated { self.listed(repo, refs, nil) } }
-            let prs = Result { () throws(GitError) in try openPullRequests(repo, cancel: cancel) }
+            let prs = Result { () throws(GitError) in try openPullRequests(repo, bitbucket: auth, cancel: cancel) }
             DispatchQueue.main.async { MainActor.assumeIsolated { self.listed(repo, refs, prs) } }
         }
     }
@@ -245,10 +246,24 @@ final class App: NSObject, NSApplicationDelegate {
     private func listed(
         _ repo: FilePath, _ refs: Result<(names: [String], base: String?), GitError>, _ prs: Result<[OpenPR], GitError>?
     ) {
-        var items: [(label: String, arg: String?)] = []
+        // ponytail: `repo.string` is lossy for a non-UTF-8 path (⌘O's url.path is too).
+        let open = { [unowned self] (arg: String) in { [unowned self] in relaunch(["-C", repo.string, arg]) } }
+        var items: [(label: String, pick: (() -> Void)?)] = []
         switch prs {
         case .success(let prs)?:
-            items += prs.map { ("#\($0.number)  \($0.title) — \($0.author) · \($0.branch)", "#\($0.number)") }
+            items += prs.map { ("#\($0.number)  \($0.title) — \($0.author) · \($0.branch)", open("#\($0.number)")) }
+        case .failure(.bitbucketAuth)?:
+            items.append(
+                (
+                    "Pull requests: Bitbucket needs an API token. Pick this to enter one.",
+                    { [unowned self] in
+                        askBitbucketToken(window) { [self] auth in
+                            guard let auth else { return }
+                            Secrets.save(auth)
+                            compareWith(nil)
+                        }
+                    }
+                ))
         // A row saying why there are none: gh missing or logged out names the fix.
         case .failure(let e)?: items.append(("Pull requests: \(e.title)", nil))
         case nil: items.append(("Loading pull requests…", nil))
@@ -258,14 +273,11 @@ final class App: NSObject, NSApplicationDelegate {
             let against = base ?? "HEAD"
             let others = names.filter { $0 != base }
             items.append((others.isEmpty ? "No other branches" : "Branches, compared with \(against):", nil))
-            items += others.map { ($0, "\(against)...\($0)") }
+            items += others.map { ($0, open("\(against)...\($0)")) }
         case .failure(let e): items.append(("Branches: \(e.title)", nil))
         }
-        let args = Dictionary(items.map { ($0.label, $0.arg) }, uniquingKeysWith: { a, _ in a })
-        // ponytail: `repo.string` is lossy for a non-UTF-8 path (⌘O's url.path is too).
-        compare.onPick = { [unowned self] label in
-            if let arg = args[label] ?? nil { relaunch(["-C", repo.string, arg]) }
-        }
+        let picks = Dictionary(items.map { ($0.label, $0.pick) }, uniquingKeysWith: { a, _ in a })
+        compare.onPick = { label in (picks[label] ?? nil)?() }
         compare.reload(items.map(\.label))
     }
 
@@ -308,6 +320,7 @@ final class App: NSObject, NSApplicationDelegate {
             // Launched outside a repository (from Finder the directory is /): ask for one. Not when
             // measuring (GRIIY_MARK), which no one is there to answer.
             if case .notARepo = e, markPath == nil { return choose(e) }
+            if e == .bitbucketAuth, markPath == nil, !Secrets.fromEnvironment { return askToken(e) }
             showMessage(e.title, e.detail, e.hint)
             phase = .error(e.title)
         case .success(let r):
@@ -339,6 +352,22 @@ final class App: NSObject, NSApplicationDelegate {
                 return
             }
             openRepo(FilePath(url.path))
+        }
+    }
+
+    /// The Bitbucket token, then the same review again; on Cancel, `e` as usual.
+    private func askToken(_ e: GitError) {
+        askBitbucketToken(window) { [self] auth in
+            guard let auth else {
+                showMessage(e.title, e.detail, e.hint)
+                phase = .error(e.title)
+                return
+            }
+            if !Secrets.save(auth) {
+                FileHandle.standardError.write(
+                    Data("griiy: the keychain refused the token; kept for this run only\n".utf8))
+            }
+            openRepo(args.repo)
         }
     }
 
@@ -570,9 +599,9 @@ let ui = App()
 app.delegate = ui
 // git runs while the window is being created. Review.open blocks, so it gets a thread, not a Task.
 func openRepo(_ repo: FilePath) {
-    let (spec, cancel) = (args.spec, ui.cancel)
+    let (spec, cancel, auth) = (args.spec, ui.cancel, Secrets.bitbucket)
     Thread.detachNewThread {
-        let result = Result { () throws(GitError) in try Review.open(repo, spec, cancel: cancel) }
+        let result = Result { () throws(GitError) in try Review.open(repo, spec, bitbucket: auth, cancel: cancel) }
         var doc: [String: Any]?
         if let store, case .success(let r) = result {
             do throws(StoreError) {
