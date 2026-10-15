@@ -5,6 +5,7 @@ import AppKit
 import Carbon
 import Foundation
 import GriiyCore
+import System
 
 private func hex(_ light: UInt32, _ dark: UInt32) -> NSColor {
     func color(_ v: UInt32) -> NSColor {
@@ -253,6 +254,9 @@ final class App: NSObject, NSApplicationDelegate {
     func loaded(_ result: Result<Review, GitError>, doc: [String: Any]?) {
         switch result {
         case .failure(let e):
+            // Launched outside a repository (from Finder the directory is /): ask for one. Not when
+            // measuring (GRIIY_MARK), which no one is there to answer.
+            if case .notARepo = e, markPath == nil { return choose(e) }
             showMessage(e.title, e.detail, e.hint)
             phase = .error(e.title)
         case .success(let r):
@@ -273,6 +277,23 @@ final class App: NSObject, NSApplicationDelegate {
             } else {
                 phase = .ready
             }
+        }
+    }
+
+    /// Asks for a repository, again after each folder that isn't one; on Cancel, `e` as usual.
+    private func choose(_ e: GitError) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "Choose a git repository to review."
+        panel.prompt = "Open"
+        panel.beginSheetModal(for: window) { [self] response in
+            guard response == .OK, let url = panel.url else {
+                showMessage(e.title, e.detail, e.hint)
+                phase = .error(e.title)
+                return
+            }
+            openRepo(FilePath(url.path))
         }
     }
 
@@ -465,17 +486,20 @@ let store = appDir().map { Store(root: $0.appending("reviews")) }
 let ui = App()
 app.delegate = ui
 // git runs while the window is being created. Review.open blocks, so it gets a thread, not a Task.
-let cancel = ui.cancel
-Thread.detachNewThread {
-    let result = Result { () throws(GitError) in try Review.open(args.repo, args.spec, cancel: cancel) }
-    var doc: [String: Any]?
-    if let store, case .success(let r) = result {
-        do throws(StoreError) {
-            doc = try store.load(r.key)
-        } catch {
-            FileHandle.standardError.write(Data("griiy: reading seen files: \(error.message)\n".utf8))
+func openRepo(_ repo: FilePath) {
+    let (spec, cancel) = (args.spec, ui.cancel)
+    Thread.detachNewThread {
+        let result = Result { () throws(GitError) in try Review.open(repo, spec, cancel: cancel) }
+        var doc: [String: Any]?
+        if let store, case .success(let r) = result {
+            do throws(StoreError) {
+                doc = try store.load(r.key)
+            } catch {
+                FileHandle.standardError.write(Data("griiy: reading seen files: \(error.message)\n".utf8))
+            }
         }
+        DispatchQueue.main.async { MainActor.assumeIsolated { ui.loaded(result, doc: doc) } }
     }
-    DispatchQueue.main.async { MainActor.assumeIsolated { ui.loaded(result, doc: doc) } }
 }
+openRepo(args.repo)
 app.run()
