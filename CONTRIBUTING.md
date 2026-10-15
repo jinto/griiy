@@ -19,7 +19,8 @@ Scripts:
 - `scripts/bundle.sh [--install]` builds `.build/griiy.app` (ad hoc signed) and with `--install`
   links `/usr/local/bin/griiy` to it.
 - `scripts/bench.sh <rounds> <name=binary>... -- <repo[:range]>...` measures launch-to-first-paint,
-  physical footprint and scroll frame times against real repositories.
+  physical footprint and scroll frame times against real repositories, one JSON line per run. CI runs it on a
+  generated 150k-line diff and keeps the lines as the `bench` artifact (reference only, never fails the check).
 - `scripts/smoke-quit.sh` checks that quitting while git runs leaves no git behind.
 - `scripts/winid.swift <pid>` prints the id of a process's main window, for `screencapture -l <id>` (capture
   the griiy window, never the whole screen).

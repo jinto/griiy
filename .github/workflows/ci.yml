@@ -21,3 +21,21 @@ jobs:
       - name: Binary size
         run: |
           ls -l .build/griiy.app/Contents/MacOS/griiy | awk '{ printf "binary: %.2f MB\n", $5 / 1048576 }' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Bench (reference only)
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          big="$RUNNER_TEMP/big"
+          git init -q "$big"
+          git -C "$big" -c user.name=bench -c user.email=bench@ci commit -q --allow-empty -m base
+          for i in $(seq 300); do seq 500 | sed "s/^/line $i /" > "$big/f$i.txt"; done
+          git -C "$big" add .
+          git -C "$big" -c user.name=bench -c user.email=bench@ci commit -q -m big
+          scripts/bench.sh 3 griiy=.build/release/griiy -- "$big:HEAD~1..HEAD" | tee bench.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: bench
+          path: bench.jsonl
+          if-no-files-found: ignore
