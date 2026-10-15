@@ -52,10 +52,10 @@
 - [x] **M1-6 가상 스크롤 (F-DV-4)**
   - ✓ scripts/bench.sh 12만 줄: 첫 화면 < 1s, 메모리(physical footprint 합) < 250MB, diff 행 뷰 < 5,000, 자동 스크롤 중 50ms 넘는 프레임 ≤ 1%
   - 결과 (Swift, 2026-10-13, 5라운드 중앙값): 15만 행에서 첫 화면 299ms, footprint 92MB, 행 뷰 최대 39, 50ms 초과 프레임 0/590 (docs/PLAN-swift.md 측정)
-- [ ] **M1-7 bench 확장:** 행 뷰 수, 자동 스크롤 long-frame 집계, JSON 출력
+- [x] **M1-7 bench 확장:** 행 뷰 수, 자동 스크롤 long-frame 집계, JSON 출력
   - ✓ CI 아티팩트로 저장 (참고용, 실패 기준 아님)
   - 진행: `scripts/bench.sh`가 첫 화면(앱 벽시계), footprint, 스크롤 프레임, 행 뷰 수를 보고한다 (2026-10-13)
-  - 결과 (2026-10-15, CI 확인 전): `bench.sh`가 실행마다 JSON 한 줄을 낸다(`jq -nc … '$ARGS.named'`, 못 잰 값과 깨진 mark 줄은 `null`). 앱이 끝나면 150초를 기다리지 않고 `FAILED(exited)`, 에러 화면·빈 diff는 `FAILED(no scroll)`. `check`에 참고용 단계: 300파일 × 500줄(15만 600행) 저장소를 만들어 3라운드 → artifact `bench`. bench와 업로드 둘 다 `continue-on-error`라 `check`를 막지 않는다. 로컬에서 CI 단계 그대로 3줄 모두 `ok`(첫 화면 243–288ms, 첫 실행 1.8s는 콜드). **남은 일:** PR에서 artifact의 `status`가 `ok`이고 `fp`가 0이 아닌지(러너의 GUI). docs/PLAN-M1-7.md
+  - 결과 (2026-10-15): `bench.sh`가 실행마다 JSON 한 줄을 낸다(`jq -nc … '$ARGS.named'`, 못 잰 값과 깨진 mark 줄은 `null`). 앱이 끝나면 150초를 기다리지 않고 `FAILED(exited)`, 에러 화면·빈 diff는 `FAILED(no scroll)`. `check`에 참고용 단계: 300파일 × 500줄(15만 600행) 저장소를 만들어 3라운드 → artifact `bench`. bench와 업로드 둘 다 `continue-on-error`라 `check`를 막지 않는다. 로컬에서 CI 단계 그대로 3줄 모두 `ok`(첫 화면 243–288ms, 첫 실행 1.8s는 콜드). **✓ CI (PR #1, run 38702744657):** 러너에서 창이 뜨고 스크롤한다. artifact 3줄 모두 `ok`, 첫 화면 1056/373/464ms, fp 45MB, 행 뷰 33, 50ms 초과 프레임 1/590(첫 라운드)·0·0. docs/PLAN-M1-7.md
 - [x] **M1-8 파일 트리 개선 (F-DV-1):** 접힌 폴더는 펼칠 때 렌더
   - ✓ 1만 파일 저장소에서 트리 뷰 < 2,000
   - 결과 (2026-10-13): NSOutlineView는 펼친 항목의 자식만 묻고, 펼친 행도 화면에 보이는 것만 뷰를 만든다. bench 두 번째 mark 줄에 `"tree":{"rows","views"}`를 붙였다. 최악의 경우(1만 파일, 100개 폴더에 변경이 있어 모두 펼쳐짐)에서 펼친 행 10,110개, 트리 뷰 29개, 첫 화면 약 500ms(release)
