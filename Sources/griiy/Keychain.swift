@@ -58,9 +58,13 @@ enum Secrets {
 @MainActor
 func askBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) -> Void) {
     let start = NSAlert()
-    start.messageText = "Bitbucket needs an API token"
+    // Asked after Bitbucket answered 401: with a token saved, that one was refused.
+    let refused = Secrets.bitbucket != nil
+    start.messageText = refused ? "Bitbucket refused the saved token" : "Bitbucket needs an API token"
     start.informativeText = """
-        griiy reads pull requests through Bitbucket's API, with a token from your Atlassian account.
+        \(refused
+            ? "Check the email (your Atlassian account's), and that the token was made with Create API token with scopes for Bitbucket; a plain API token is refused."
+            : "griiy reads pull requests through Bitbucket's API, with a token from your Atlassian account.")
 
         In the browser, choose Create API token with scopes → Bitbucket, give it read:pullrequest:bitbucket and read:repository:bitbucket, and copy it.
         """
