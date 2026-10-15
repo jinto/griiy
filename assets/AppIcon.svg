@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- griiy app icon: a loupe over a removed and an added line. macOS grid: 824 body, corner 185. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#efe9dc"/>
+  <g fill="#c9c0ad">
+    <rect x="210" y="250" width="480" height="38" rx="19"/>
+    <rect x="210" y="320" width="360" height="38" rx="19"/>
+    <rect x="210" y="740" width="300" height="38" rx="19"/>
+  </g>
+  <circle cx="470" cy="520" r="190" fill="#fffdf8" stroke="#2b2a26" stroke-width="44"/>
+  <rect x="355" y="452" width="230" height="40" rx="20" fill="#d6453b"/>
+  <rect x="355" y="548" width="230" height="40" rx="20" fill="#1f9d55"/>
+  <path d="M610 660 L760 810" stroke="#2b2a26" stroke-width="72" stroke-linecap="round"/>
+</svg>
