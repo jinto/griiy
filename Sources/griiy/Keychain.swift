@@ -54,7 +54,8 @@ enum Secrets {
 }
 
 /// Asks for the Atlassian email and API token in two sheets on `window`: getting a token (the
-/// browser), then pasting it. `done` gets them, or nil on Cancel.
+/// browser), then pasting it, with the steps on that second sheet: it stays up while the browser
+/// is used. `done` gets them, or nil on Cancel.
 @MainActor
 func askBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) -> Void) {
     let start = NSAlert()
@@ -63,10 +64,8 @@ func askBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) ->
     start.messageText = refused ? "Bitbucket refused the saved token" : "Bitbucket needs an API token"
     start.informativeText = """
         \(refused
-            ? "Check the email (your Atlassian account's), and that the token was made with Create API token with scopes for Bitbucket; a plain API token is refused."
+            ? "Check the email (your Atlassian account's), and that the token was made with Create API token with scopes for Bitbucket: a plain API token is refused."
             : "griiy reads pull requests through Bitbucket's API, with a token from your Atlassian account.")
-
-        In the browser, choose Create API token with scopes → Bitbucket, give it read:pullrequest:bitbucket and read:repository:bitbucket, and copy it.
         """
     start.addButton(withTitle: "Create Token in Browser")
     start.addButton(withTitle: "I Have a Token")
@@ -77,18 +76,26 @@ func askBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) ->
             if let url = URL(string: "https://id.atlassian.com/manage-profile/security/api-tokens") {
                 NSWorkspace.shared.open(url)
             }
-            pasteBitbucketToken(window, done)
-        case .alertSecondButtonReturn: pasteBitbucketToken(window, done)
+            pasteBitbucketToken(window, steps: true, done)
+        case .alertSecondButtonReturn: pasteBitbucketToken(window, steps: false, done)
         default: done(nil)
         }
     }
 }
 
 @MainActor
-private func pasteBitbucketToken(_ window: NSWindow, _ done: @escaping (BitbucketAuth?) -> Void) {
+private func pasteBitbucketToken(_ window: NSWindow, steps: Bool, _ done: @escaping (BitbucketAuth?) -> Void) {
     let alert = NSAlert()
-    alert.messageText = "Paste your token"
-    alert.informativeText = "griiy keeps it in your keychain."
+    alert.messageText = steps ? "Create the token in the browser" : "Paste your token"
+    alert.informativeText =
+        (steps
+            ? """
+            1. Click Create API token with scopes (not Create API token).
+            2. Name it griiy, set an expiry, and choose the app Bitbucket.
+            3. Select the scopes read:repository:bitbucket and read:pullrequest:bitbucket.
+            4. Create it, copy the token, and paste it below with your Atlassian email.
+
+            """ : "") + "griiy keeps it in your keychain."
     let email = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
     email.placeholderString = "Atlassian email"
     email.stringValue = Secrets.bitbucket?.email ?? ""
